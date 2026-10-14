@@ -53,6 +53,12 @@ document.getElementById('selftest').addEventListener('click', async () => {
     backendInfo = `RSS ${j.rss_mb} MB`;
   } catch (_) {}
 
+  // 2.5) 威胁情报状态（本地黑名单 + URLhaus 云查）
+  let intel = null;
+  try {
+    intel = await (await fetch(BACKEND + '/intel/status')).json();
+  } catch (_) {}
+
   // 3) 决策自检：这些 URL 的期望结果
   const cases = [
     { url: 'https://www.baidu.com/', want: 'allow', why: '白名单' },
@@ -75,10 +81,33 @@ document.getElementById('selftest').addEventListener('click', async () => {
     );
   }
 
+  // 3.5) 组装云查状态两行
+  const bl = intel && intel.blocklist;
+  const uh = intel && intel.urlhaus;
+  const blLine = bl
+    ? `<span class="${bl.count > 0 ? 'ok' : 'bad'}">${bl.count} 条 ${bl.count > 0 ? '✓' : '✗ 未下载（重启服务后自动下载）'}</span>`
+    : '<span class="bad">✗ 未知（后端未启动？）</span>';
+  let uhLine;
+  if (!uh) {
+    uhLine = '<span class="bad">✗ 未知（后端未启动？）</span>';
+  } else if (!uh.configured) {
+    uhLine = '<span class="bad">✗ 未配置 Key</span>';
+  } else if (uh.state === 'valid') {
+    uhLine = '<span class="ok">✓ 已启用（Key 有效）</span>';
+  } else if (uh.state === 'invalid') {
+    uhLine = '<span class="bad">✗ Key 无效（unknown_auth_key）</span>';
+  } else if (uh.state === 'unreachable') {
+    uhLine = `<span class="bad">✗ 网络异常（${uh.detail || '未知'}）</span>`;
+  } else {
+    uhLine = '<span>已配置（首次访问后验证）</span>';
+  }
+
   box.innerHTML =
     `<div class="stats">`
     + `扩展后台：${ping && ping.ok ? `<span class="ok">✓ 运行中（v${ping.build}）</span>` : '<span class="bad">✗ 未响应</span>'}<br>`
-    + `本地后端：${backendOk ? `<span class="ok">✓ 已连接（${backendInfo}）</span>` : '<span class="bad">✗ 未连接（未启动 scripts\\start.bat？）</span>'}`
+    + `本地后端：${backendOk ? `<span class="ok">✓ 已连接（${backendInfo}）</span>` : '<span class="bad">✗ 未连接（未启动 scripts\\start.bat？）</span>'}<br>`
+    + `本地黑名单：${blLine}<br>`
+    + `URLhaus 云查：${uhLine}`
     + `</div>`
     + `<table><tr><th align="left">测试 URL</th><th align="left">依据</th><th align="left">期望</th><th align="left">实际</th></tr>`
     + rows.join('') + `</table>`;

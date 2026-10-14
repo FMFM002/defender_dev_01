@@ -4,6 +4,9 @@
   GET  /health                      - 健康检查 + RSS + 队列大小
   POST /intel/url                   - 查询 URL（云查 + 缓存）
   POST /intel/hash                  - 查询文件哈希
+  GET  /intel/status                - 威胁情报状态（本地黑名单 + URLhaus 云查）
+  GET  /intel/blocklist/status      - 本地黑名单状态
+  POST /intel/blocklist/refresh     - 强制刷新本地黑名单
   GET  /whitelist                   - 列出白名单
   POST /whitelist                   - 添加白名单
   DELETE /whitelist/{pattern}       - 移除白名单
@@ -74,6 +77,16 @@ def blocklist_status() -> dict:
 def blocklist_refresh(force: bool = True) -> dict:
     from src.guardian.intel import blocklist
     return blocklist.refresh(force=force)
+
+
+@router.get("/intel/status")
+def intel_status() -> dict:
+    """威胁情报整体状态（供扩展自检面板展示）：本地黑名单 + URLhaus 云查。"""
+    from src.guardian.intel import blocklist, urlhaus
+    return {
+        "blocklist": blocklist.status(),
+        "urlhaus": urlhaus.status(),
+    }
 
 
 # ---- Whitelist ----

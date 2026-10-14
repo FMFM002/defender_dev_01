@@ -30,6 +30,32 @@ _warned_no_key = False
 _key_logged = False
 _warned_bad_key = False
 
+# 最近一次云查的可观测状态（供 /intel/status 与自检面板展示）
+#   disabled    - 未配置 Auth-Key
+#   valid       - Key 有效（能正常查询）
+#   invalid     - Key 被 abuse.ch 拒绝（unknown_auth_key / 401）
+#   unreachable - 网络/服务异常（超时、5xx、代理不通等）
+#   unknown     - 尚未发起过查询
+_last_state = "unknown"
+_last_detail = "尚未发起云查"
+
+
+def _set_state(state: str, detail: str = "") -> None:
+    global _last_state, _last_detail
+    _last_state = state
+    _last_detail = detail
+
+
+def status() -> dict:
+    """返回 URLhaus 云查的配置与最近一次查询状态（给自检面板用）。"""
+    return {
+        "source": "urlhaus",
+        "configured": bool(URLHAUS_AUTH_KEY),
+        "key_len": len(URLHAUS_AUTH_KEY),
+        "state": _last_state,
+        "detail": _last_detail,
+    }
+
 
 def query_url(url: str) -> dict:
     """查询 URL，返回标准化结果。
@@ -58,6 +84,7 @@ def query_url(url: str) -> dict:
                 "Key 免费申请：https://auth.abuse.ch/"
             )
             _warned_no_key = True
+        _set_state("disabled", "未配置 Auth-Key")
         return {
             "source": "urlhaus",
             "status": "disabled",
@@ -85,18 +112,23 @@ def query_url(url: str) -> dict:
                 pass
             if qs == "unknown_auth_key" or r.status_code == 401:
                 _warn_bad_key()
+                _set_state("invalid", qs or f"http_{r.status_code}")
             else:
                 logger.warning(f"URLhaus HTTP {r.status_code} for {url[:80]}")
+                _set_state("unreachable", f"http_{r.status_code}" + (f":{qs}" if qs else ""))
             return _error(url, f"http_{r.status_code}" + (f":{qs}" if qs else ""))
         if r.status_code != 200:
             logger.warning(f"URLhaus HTTP {r.status_code} for {url[:80]}")
+            _set_state("unreachable", f"http_{r.status_code}")
             return _error(url, f"http_{r.status_code}")
         data = r.json()
     except Exception as e:
         logger.warning(f"URLhaus query failed for {url[:80]}: {e}")
+        _set_state("unreachable", str(e))
         return _error(url, str(e))
 
     status = data.get("query_status", "error")
+    _set_state("valid", status)
     if status == "ok":
         return {
             "source": "urlhaus",

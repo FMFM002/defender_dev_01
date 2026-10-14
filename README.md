@@ -141,6 +141,7 @@
 | GET | `/health` | 健康检查 + RSS |
 | POST | `/intel/url` | URL 云查 + 缓存 |
 | POST | `/intel/hash` | 文件哈希云查 + 缓存 |
+| GET | `/intel/status` | 威胁情报状态（本地黑名单条数 + URLhaus Key/云查状态） |
 | GET | `/whitelist` | 列出白名单 |
 | POST | `/whitelist` | 添加白名单 |
 | DELETE | `/whitelist/{pattern}` | 移除白名单 |
@@ -166,11 +167,16 @@
 | `http://1.2.3.4/` | 拦截页 | 启发式（裸 IP 主机） |
 | 任意 Phishing Army 黑名单域名 | 拦截页 | 云查（本地域名黑名单） |
 
-> ⚠️ `malware.wicar.org` 这类"恶意软件样本站"只有在**配置了 URLhaus Auth-Key**后才会命中云查。
-> 未配置时它既不在本地黑名单（该库聚焦钓鱼域名），也不在灰名单中，因此会放行。
-> 想启用：到 https://auth.abuse.ch/ 免费注册 → 创建 Auth-Key → 写入 `.env` 后重启服务（见下）。
+> 🔎 **URLhaus 云查（已启用）**：Key 已写入 `.env` 并**实测有效**，可识别"活跃恶意软件分发 URL"
+> （例如 Mozi 僵尸网络的下载点 `http://<ip>:<port>/bin.sh`）。测试时从 https://urlhaus.abuse.ch/browse/
+> 取一条当前在线 URL 访问即可命中。注意 `malware.wicar.org` 本身不在 URLhaus 库里（返回 `no_results`），
+> 不适用作验证样本。
 >
-> **常见坑**：abuse.ch 返回 `{"query_status":"unknown_auth_key"}`（HTTP 403）表示 Key 无效/写错/未激活。
+> **状态一眼可见**：设置页点「运行自检」会多显示两行——
+> `本地黑名单：159508 条 ✓` 与 `URLhaus 云查：✓ 已启用（Key 有效）`；
+> 若 Key 无效则显示 `✗ Key 无效（unknown_auth_key）`。后端对应 `GET /intel/status`。
+>
+> **常见坑**：abuse.ch 返回 `{"query_status":"unknown_auth_key"}` 表示 Key 无效/写错/生成时未点 Save profile。
 > 服务日志会给出明确提示，但**不影响**本地黑名单与启发式的拦截。
 
 ### 启用 URLhaus（可选）
@@ -189,11 +195,11 @@ URLHAUS_AUTH_KEY=你的Auth-Key
 
 **P1 阶段完成**：
 
-✅ 后台服务（FastAPI，15 个端点）  
+✅ 后台服务（FastAPI，16 个端点）  
 ✅ Edge MV3 扩展（manifest / SW / content script / 拦截页 / 设置页）  
 ✅ 默认白名单（35 个通用域名）+ 灰名单 + 启发式  
 ✅ 本地域名黑名单（Phishing Army，约 16 万条，免 Key，24h 自动刷新）  
-✅ URLhaus 集成（可选 Auth-Key + 代理感知 + 24h 缓存）  
+✅ URLhaus 集成（Auth-Key 已写入 `.env` 并实测有效 + 代理感知 + 24h 缓存）  
 ✅ WMI 进程监控（高风险父进程 / 命令行 / 投放路径）  
 ✅ ASR 规则管理（独立工具 + 自动提权 bat）  
 ✅ 用户白名单 + 隔离区  
@@ -218,7 +224,15 @@ URLHAUS_AUTH_KEY=你的Auth-Key
   （背景：多次出现"改了代码但 `edge://extensions` 没点重新加载 → 跑的还是旧 SW"。）
 - **名单覆盖防御** → `hydrate()` 合并后若结果为空则**保留内置默认值**，杜绝早期"名单被清空 → 完全不拦截"复现。
 - **进程误报修复** → Edge 正常派生的 `identity_helper.exe` 等官方 helper 不再告警；
-  新增"可执行文件是否位于浏览器官方安装目录"判定，比进程名白名单更稳。恶意程序从浏览器目录外落地仍然告警。
+  新增"可执行文件是否位于��览器官方安装目录"判定，比进程名白名单更稳。恶意程序从浏览器目录外落地仍然告警。
+
+**v0.2.1 更新（2026-10-14 16:10）**：
+
+- **URLhaus 云查打通** → 用户重新生成的有效 Auth-Key 已写入 `.env`；实测
+  `http://<ip>:<port>/bin.sh`（Mozi）经聚合器判为 `malicious=true / malware_download / 评分 80`。
+- **威胁情报状态可见** → 后端新增 `GET /intel/status`（本地黑名单条数 + URLhaus 配置/最近状态）；
+  扩展自检面板新增两行：`本地黑名单：N 条` 与 `URLhaus 云查：✓ 已启用 / ✗ Key 无效 / ✗ 未配置`。
+  新增 `urlhaus.status()` 记录最近一次云查的可观测状态（disabled / valid / invalid / unreachable）。
 
 **P2 计划**：
 
