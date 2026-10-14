@@ -103,12 +103,16 @@ TEMP_DIR = os.environ.get("TEMP", "")
 STARTUP_DIR = (APPDATA + "\\Microsoft\\Windows\\Start Menu\\Programs\\Startup") if APPDATA else ""
 
 # 监控白名单：用户可写入、感染主要落地点
+# 注意：USN 全卷监控成功时这些目录都已被覆盖；这里是 USN 失败（权限不足）的降级路径
 FSMON_WATCH_DIRS = [
     USERPROFILE + "\\Downloads",
     USERPROFILE + "\\Desktop",
     TEMP_DIR,
     STARTUP_DIR,
     LOCALAPPDATA,
+    # 用户明确要求的 D:\Download（QQ/迅雷/IDM 默认落地）
+    # 应用场景白名单 (\\Download\\pic\\) 会过滤掉 QQ 预览图
+    "D:\\Download",
 ]
 
 # 不订阅系统路径前缀（避免 Windows 自动展开目录）
@@ -123,6 +127,37 @@ FSMON_EXCLUDE_DIR_PARTS = [
     "\\.git\\",
     "\\WindowsApps\\",
 ]
+
+# 应用场景白名单（已知安全/低价值，落地点 = "不该扫"）——
+# 这些路径下的新增文件直接豁免，不进评分队列。命中理由记 debug 日志。
+# 用户场景：QQ 系统预览图、聊天记录库、企业微信、iCloud 等同步盘目录。
+FSMON_APP_EXCLUDE_PATTERNS = [
+    "\\Download\\pic\\",            # QQ 默认收图/系统预览缓存
+    "\\Download\\Thumb\\",          # QQ 缩略图
+    "\\Tencent Files\\",            # 微信/QQ 文件收发目录
+    "\\Documents\\WeChat Files\\",  # 微信聊天记录（主进程 db 库）
+    "\\Documents\\WXWork\\",        # 企业微信
+    "\\DingTalk\\",                 # 钉钉（英文）
+    "\\钉钉\\",                     # 钉钉（中文安装路径）
+    "\\Lark\\",                     # 飞书（英文）
+    "\\飞书\\",                     # 飞书（中文安装路径）
+    "\\Documents\\Tencent Files\\", # 微信文档
+    "\\OneDrive\\",
+    "\\Dropbox\\",
+    "\\Google Drive\\",
+    "\\iCloudDrive\\",
+    "\\AppData\\Local\\Packages\\", # UWP app 沙箱
+    "\\AppData\\Local\\Microsoft\\WindowsApps\\",
+]
+
+# USN Journal 全卷监听（P2-1 增强）
+FSMON_USN_ENABLED = True               # 全卷监控总开关
+FSMON_USN_PATH_CACHE_MAX = 100_000     # file_ref → path LRU 上限（≈30 MB）
+FSMON_USN_POLL_INTERVAL_S = 0.5        # 无事件时循环间隔
+FSMON_USN_BUFFER_KB = 64               # DeviceIoControl 输出缓冲
+
+# USN 用 reason mask（位或组合）：FILE_CREATE + RENAME_OLD_NAME_NEW
+USN_REASON_MASK = 0x00000100 | 0x00002000
 
 # 已知厂商子目录（避免合法安装噪声）
 NOISY_VENDOR_DIRS = [

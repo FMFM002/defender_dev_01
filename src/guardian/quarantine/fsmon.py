@@ -1,15 +1,15 @@
-"""文件监控（基于 msvcrt ReadDirectoryChangesW，无第三方依赖）。
+"""文件监控（P2-1 增强版）。
 
-监控方式：
-- 每目录一个后台线程，循环 os.scandir() 快照比对（1s 间隔）
-- 检测"新建/修改（mtime 变化）"事件
-- 文件系统异步事件通知（ReadDirectoryChangesW）需要 kernel32 API + 重叠 I/O，
-  实现复杂度高；轮询在 1s 粒度对恶意软件拦截完全够用，且 CPU < 0.5%
+两路可选，优先 USN：
+1. **USN Journal 全卷监控**（NTFS 卷，单句柄全卷覆盖，0.5s 轮询）
+   - 命中范围：D:/E:/... 等所有 NTFS 卷，包括 QQ/微信/迅雷等自定义下载目录
+2. **目录轮询监控**（os.scandir 1s 快照比对）
+   - USN 启动失败（无 NTFS 卷 / 权限不足 / 非 Windows）的降级方案
+   - 监控固定目录：Downloads / Desktop / %TEMP% / Startup / %LOCALAPPDATA%
 
-触发后行为：
-- 把"新增文件路径"丢入队列（线程安全）
-- 后台 worker 调 manager.check_and_quarantine()
-- 安装行为识别 installer_noise 在评分前做聚合豁免
+事件流：
+USN / DirectoryWatcher → _EVENT_QUEUE → worker 池 → whitelist.is_exempt()
+→ installer_noise.record() → manager.check_and_quarantine()
 """
 
 from __future__ import annotations
@@ -29,8 +29,10 @@ from src.guardian.core.config import (
     NOISY_VENDOR_DIRS,
 )
 from src.guardian.core.logger import logger
+from src.guardian.quarantine import usn
 from src.guardian.quarantine.installer_noise import detector as noise_detector
 from src.guardian.quarantine.manager import check_and_quarantine
+from src.guardian.quarantine.whitelist import is_exempt
 
 
 class _DirectoryWatcher:
@@ -100,16 +102,22 @@ class _DirectoryWatcher:
 _EVENT_QUEUE: queue.Queue = queue.Queue(maxsize=FSMON_QUEUED_EVENTS_MAX)
 _WORKERS: list[threading.Thread] = []
 _WATCHERS: list[_DirectoryWatcher] = []
+_USN_OK = False  # USN 是否至少有一个卷启动成功
+_USN_RESULT: dict | None = None
 _STARTED = False
 _START_LOCK = threading.Lock()
 
 
 def _should_skip(path: str) -> bool:
-    """是否跳过该文件（系统路径 / 已知厂商子目录）。"""
+    """是否跳过该文件（系统路径 / 应用场景白名单）。"""
     p_low = path.lower().replace("/", "\\")
     for part in FSMON_EXCLUDE_DIR_PARTS:
         if part.lower() in p_low:
             return True
+    # 应用场景白名单（QQ 预览图、聊天记录、网盘等）
+    exempt, _ = is_exempt(path)
+    if exempt:
+        return True
     if LOCALAPPDATA and LOCALAPPDATA.lower() in p_low:
         # AppData\Local 已知厂商子目录内的临时文件直接放过
         for v in NOISY_VENDOR_DIRS:
@@ -153,7 +161,7 @@ def _worker_loop(idx: int):
 
 
 def _process_file(path: str):
-    """对单个文件做安装噪音识别 + 评分 + 自动隔离。"""
+    """对单个文件做应用场景白名单 + 安装噪音识别 + 评分 → 自动隔离。"""
     if not os.path.exists(path):
         return
     try:
@@ -161,6 +169,12 @@ def _process_file(path: str):
     except OSError:
         return
     if size == 0:
+        return
+
+    # 应用场景白名单二次兜底（USN 直送也会经过）
+    exempt, reason = is_exempt(path)
+    if exempt:
+        logger.debug(f"[fsmon] 豁免 {path}（{reason}）")
         return
 
     # 记录事件（可能命中"安装豁免"）
@@ -185,8 +199,14 @@ def _process_file(path: str):
 # ---- 启动 / 停止 ----
 
 def start() -> None:
-    """启动 fsmon（包含 watcher + worker 池）。"""
-    global _STARTED
+    """启动 fsmon（包含 USN watcher / 目录轮询 watcher / worker 池）。
+
+    启动策略：
+    - 先尝试 USN 全卷监控（覆盖所有 NTFS 卷）
+    - 至少一个 NTFS 卷启动成功 → 不启动目录轮询（避免重复处理）
+    - USN 完全失败 → 启动目录轮询（兼容无 NTFS / 权限不足环境）
+    """
+    global _STARTED, _USN_OK, _USN_RESULT
     with _START_LOCK:
         if _STARTED:
             return
@@ -198,7 +218,24 @@ def start() -> None:
         t.start()
         _WORKERS.append(t)
 
-    # 启动每个目录的 watcher
+    # 优先尝试 USN 全卷监控
+    _USN_RESULT = usn.start_all()
+    ntfs_volumes = usn.list_ntfs_volumes() if _USN_RESULT.get("enabled") else []
+    usn_started = bool(_USN_RESULT.get("enabled")) and any(
+        v == "ok" for v in _USN_RESULT.get("drives", {}).values()
+    )
+    _USN_OK = usn_started
+
+    if usn_started:
+        ok_count = sum(1 for v in _USN_RESULT.get("drives", {}).values() if v == "ok")
+        logger.info(
+            f"fsmon USN 全卷模式：{ok_count}/{len(ntfs_volumes)} 个 NTFS 卷启动成功"
+        )
+        # USN 已覆盖 → 不启动目录轮询
+        return
+
+    # 降级：目录轮询
+    logger.info(f"fsmon 目录轮询模式（USN 未启用，NTFS 卷={ntfs_volumes}）")
     for d in FSMON_WATCH_DIRS:
         if not d:
             continue
@@ -214,6 +251,7 @@ def start() -> None:
 
 def stop() -> None:
     """停止所有 watcher + worker（测试 / 重启用）。"""
+    usn.stop_all()
     for w in _WATCHERS:
         w.stop()
     for _ in _WORKERS:
@@ -223,12 +261,15 @@ def stop() -> None:
 
 
 def status() -> dict:
-    return {
+    info = {
         "started": _STARTED,
         "watch_dirs": len(_WATCHERS),
         "workers": len(_WORKERS),
         "queue_size": _EVENT_QUEUE.qsize(),
+        "usn": usn.status(),
+        "mode": "usn" if _USN_OK else ("polling" if _WATCHERS else "none"),
     }
+    return info
 
 
 def feed(path: str) -> dict:

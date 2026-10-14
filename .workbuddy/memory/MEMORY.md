@@ -89,6 +89,20 @@
     - 启动后台线程自动下载 + 每 24h 刷新；命中评分 70（基础 50 + blocklist 20），`threat='phishing_domain'`
     - 端点：`GET /intel/blocklist/status`、`POST /intel/blocklist/refresh`
   - 注意：Phishing Army 聚焦**钓鱼域名**，不含 `malware.wicar.org` 这类样本站——没有 URLhaus Key 时不会被拦
+- **文件全卷监控选 USN Journal（2026-10-14）**：用户要求"任何新增文件都要查，文件来源只作评分项"，固定目录绕过 5 个漏掉 QQ/微信/迅雷等自定义下载目录。三条路对比：
+  - RDCW 全卷遍历：C 盘几十万子目录撑爆（不可行）
+  - **USN Journal**：NTFS 自带的 Change Journal（`\\.\C:` + `FSCTL_READ_USN_JOURNAL`），单句柄全卷（用户态、需管理员）；event 流式、增量、几乎无 CPU
+  - ETW Kernel-File：全卷覆盖，事件量大需强过滤（实现复杂）
+  - Minifilter 驱动：违反"不上驱动"硬约束
+  - 当前实现：USN 全卷（管理员下启动）+ 目录轮询降级（非管理员）+ 应用场景白名单（路径子串匹配）
+  - **USN 启动要求管理员**：`CreateFileW` 返 err=5 (`ERROR_ACCESS_DENIED`)；非管理员下静默降级为目录轮询（`fsmon.status()["mode"] = "polling"`）
+  - **USN 路径解析**：file_ref → 完整路径 的 LRU 缓存（10 万项 ≈ 30 MB）；启动时只有 NTFS 卷根（file_ref=5）已知，缓存随事件累积；父目录未知的创建事件会被跳过（等下次）
+  - **应用场景白名单**（`quarantine/whitelist.py`）：QQ 预览图（`D:\Download\pic\`）/ 微信聊天库 / 企微 / 钉钉中英文 / 飞书 / OneDrive/Dropbox/Google Drive/iCloudDrive / UWP 沙箱；命中只记 debug 日志，不进评分队列
+  - **降级路径默认监控目录**：`FSMON_WATCH_DIRS` 含 `D:\Download`（用户硬要求）+ 用户目录 Downloads/Desktop/%TEMP%/Startup/%LOCALAPPDATA%
+  - **EICAR 字节被 Defender 实时锁**：写 EICAR 测试文件时被 Defender 立刻处理，引擎算 sha256 返 `[Errno 22] Invalid argument`，evidence 为空；这是 Defender 在工作的证明，引擎放弃评分是预期行为
+  - **EICAR 标准串 SHA-256**：`cc822bdf47cb96ec05b0bd60d2667ce1a1a5b3ee07c503fec0bc9f7b03f3cb81`
+- **ctypes ctypes.c_uint64 顺序问题**：USN_RECORD_V2 header 字段顺序严格按 MS 文档（FileNameOffset=64 字节对齐）；filename 是 UTF-16 LE 变长。读 record 时直接 `from_buffer_copy(raw, offset)`，filename 从 `offset + rec.FileNameOffset` 开始 slice
+- **RSS idle 边缘**：USN 模块 + 6 目录快照比对时 RSS 约 87MB（略超 80MB idle 上限）；MemGuard 在 3 次连续超阈值时进入 degraded（但 on_degrade 回调目前未注册实际动作）
 - **MV3 Service Worker 生命周期（关键坑）**：SW 空闲约 30s 被回收，重新唤醒时 `onInstalled`/`onStartup` **都不再触发**。任何"必须可用"的配置（白名单/灰名单/启发式）都必须写成 `background.js` 的**模块级常量**，不能只放 `init()` 异步加载——否则 SW 重启后名单为空 → 灰查/启发式全失效 → **扩展完全不拦截**（2026-10-14 真机现象）
 - **扩展告警方式**：不用 `chrome.notifications`（用户明确不要系统通知）；命中 → `chrome.tabs.update` 重定向到内置 `blocked.html`，证据页内展开
 - **MV3 扩展页面禁止内联脚本**：CSP `script-src 'self'`，HTML 里的内联 `<script>` **一律不执行**（拦截页会永远"加载中"）。所有 JS 必须独立成文件、用 `<script src=...>` 引用。**同理 `javascript:` 链接也被拦掉（按钮点不动）** → 用独立 JS 事件绑定

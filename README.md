@@ -18,7 +18,7 @@
 ├─ Edge 扩展（MV3 主防线）：白名单 + 灰名单 + 启发式 + declarativeNetRequest 动态规则 + 拦截页
 ├─ 本地后台服务（数据中枢）：FastAPI 端口 7890
 │   ├─ 威胁情报聚合：本地域名黑名单（Phishing Army，免 Key）+ URLhaus（可选，需 Auth-Key）+ sec-mcp
-│   ├─ **文件监控 fsmon（P2-1）**：5 个用户态关键目录轮询 → MalwareBazaar 云查 + 文件启发式 → ≥70 自动隔离
+│   ├─ **文件监控 fsmon（P2-1 增强）**：USN Journal 全卷监控（NTFS）+ 目录轮询降级 + 路径白名单豁免 + MalwareBazaar 云查 + 文件启发式 → ≥70 自动隔离
 │   ├─ 文件哈希云查：MalwareBazaar（abuse.ch Key，与 URLhaus 通用）
 │   ├─ 隔离区管理（开发期复制 + 保留原文件，30 天后自动清理）
 │   ├─ WMI/ETW 进程监控（高风险父进程 + 危险命令行 + 投放路径）
@@ -122,6 +122,9 @@
 > 本仓库的 `start.bat` / `stop.bat` / `apply_asr.bat` 已统一为该格式，并在出错时自动 `pause` 停留以便查看原因。
 > 若自行改动，请保持 CRLF 换行、不要写入非 ASCII 字符（否则 cmd 会按 GBK 误解析导致乱码报错）。
 
+> **想用 USN 全卷监控**：以**管理员**身份运行 `start.bat`。
+> 非管理员下 `\\.\C:` 设备句柄返回 ERROR_ACCESS_DENIED，fsmon 会自动降级为目录轮询（仍能监控 D:\Download 等关键目录），日志里会提示"需要管理员权限"。
+
 ### Edge 扩展
 1. 打开 `edge://extensions/`
 2. 打开"开发者模式"
@@ -156,8 +159,39 @@
 | GET | `/intel/blocklist/status` | 本地域名黑名单状态（条数 / 上次刷新） |
 | POST | `/intel/blocklist/refresh` | 立即刷新本地域名黑名单 |
 | POST | `/system/check_file` | 同步评分单个文件 + 自动隔离（与 fsmon.feed 同款） |
-| GET | `/system/fsmon/status` | 文件监控状态（启动 / 监控目录数 / worker 数 / 队列 / 阈值） |
+| GET | `/system/fsmon/status` | 文件监控状态（模式 USN/polling / 监控目录数 / worker 数 / 队列 / 阈值 / USN watcher 列表） |
 | POST | `/system/fsmon/feed` | 手动注入文件路径（测试 / 扩展调用） |
+
+## 文件监控 fsmon（P2-1 增强版）
+
+### 监控方式（自动选最合适的）
+1. **USN Journal 全卷监控**（推荐，需管理员）
+   - 单句柄监听整个 NTFS 卷，事件流式、几乎无 CPU
+   - 覆盖范围：所有 NTFS 卷（包括 QQ/微信/迅雷等任何自定义下载目录）
+   - 实现：ctypes 调 `FSCTL_READ_USN_JOURNAL` + 增量 file_ref → path 缓存
+   - 仅支持 NTFS；FAT32/exFAT 卷自动跳过
+2. **目录轮询监控**（USN 失败/无 NTFS 时的降级方案）
+   - 监控 `Downloads / Desktop / %TEMP% / Startup / %LOCALAPPDATA% / D:\Download` 等关键目录
+   - `os.scandir` 每 1 秒快照比对，CPU < 0.5%
+   - 不在 `FSMON_EXCLUDE_DIR_PARTS` 中的新增/修改文件入评分队列
+
+### 应用场景白名单（路径级豁免，评分前过滤）
+- QQ 系统预览图、缩略图缓存（`D:\Download\pic\`、`D:\Download\Thumb\`）
+- 微信/QQ 文件收发目录（`D:\Tencent Files\`）
+- 微信聊天记录库（`C:\Users\farma\Documents\WeChat Files\`）
+- 企业微信 / 钉钉（中英文路径都支持） / 飞书
+- 同步盘目录：OneDrive / Dropbox / Google Drive / iCloudDrive
+- UWP 应用沙箱（`AppData\Local\Packages\`）
+- 命中后只记 debug 日志，不进评分队列、不进白名单表
+
+### 事件流
+USN / DirectoryWatcher → _EVENT_QUEUE → worker 池 → 应用场景白名单 → installer_noise 聚合 → manager.check_and_quarantine → 阈值 ≥ 70 自动隔离
+
+### 路径解析（USN 模式专属）
+- USN 只给"文件名 + 父目录的 NTFS file reference"
+- 维护 file_ref → 完整路径 的 LRU 缓存（10 万项上限 ≈ 30 MB）
+- 启动时只有 NTFS 卷根（file_ref=5）已知；后续增量累积
+- 父目录未知的文件创建事件会被跳过（等下次）
 
 ## 文件监控 P2-1 评分规则
 
