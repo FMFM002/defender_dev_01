@@ -27,7 +27,7 @@ from src.guardian.monitor.etw_proc import etw_monitor
 
 from fastapi import FastAPI
 
-app = FastAPI(title="PC Guardian", version="0.1.0")
+app = FastAPI(title="PC Guardian", version="0.2.1")
 app.include_router(router)
 
 
@@ -41,6 +41,27 @@ def _start_blocklist_refresh() -> None:
             logger.warning(f"blocklist 后台刷新失败（不影响其它功能）: {e}")
 
     t = threading.Thread(target=_run, name="blocklist-refresh", daemon=True)
+    t.start()
+
+
+def _start_urlhaus_probe() -> None:
+    """后台做一次 URLhaus 云查探针，让自检面板能立即显示 Key 是否有效。
+
+    用无害 URL 探测——只要 Key 被 abuse.ch 接受即判定为有效（状态置为 valid），
+    不需要真的命中恶意样本。未配置 Key 时直接跳过。
+    """
+    def _run():
+        try:
+            from src.guardian.core.config import URLHAUS_AUTH_KEY
+            if not URLHAUS_AUTH_KEY:
+                return
+            from src.guardian.intel import urlhaus
+            r = urlhaus.query_url("https://example.com/")
+            logger.info(f"URLhaus 启动探针完成：status={r.get('status')}（自检面板可据此显示 Key 是否有效）")
+        except Exception as e:
+            logger.debug(f"URLhaus 启动探针失败（不影响其它功能）: {e}")
+
+    t = threading.Thread(target=_run, name="urlhaus-probe", daemon=True)
     t.start()
 
 
@@ -107,6 +128,9 @@ def main() -> int:
 
     # 本地域名黑名单：后台下载/刷新（首次约 3.4 MB，不阻塞启动）
     _start_blocklist_refresh()
+
+    # URLhaus 云查：后台探针一次，让自检面板立即显示 Key 是否有效
+    _start_urlhaus_probe()
 
     try:
         uvicorn.run(

@@ -126,7 +126,7 @@
 - **威胁情报状态可视化**：新增 `GET /intel/status` = `{blocklist:{count,...}, urlhaus:{configured,key_len,state,detail}}`
   - `urlhaus.status()` 记录最近云查状态：disabled / valid / invalid / unreachable / unknown
   - 扩展自检面板新增两行：`本地黑名单：N 条`、`URLhaus 云查：✓已启用/✗Key无效/✗未配置`
-- manifest 版本 → **0.2.1**；commit `85bd815` 已推 GitHub
+- manifest 版本 → **0.2.1**；commits `85bd815` + `92bf64c` 已推 GitHub
 
 ### 环境操作经验（Windows + Git Bash 坑）
 - PowerShell 工具输出偶尔被吞 → 用 `Out-File` 写 C:\Temp\*.txt 再 Read

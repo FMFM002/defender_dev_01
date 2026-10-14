@@ -233,6 +233,8 @@ URLHAUS_AUTH_KEY=你的Auth-Key
 - **威胁情报状态可见** → 后端新增 `GET /intel/status`（本地黑名单条数 + URLhaus 配置/最近状态）；
   扩展自检面板新增两行：`本地黑名单：N 条` 与 `URLhaus 云查：✓ 已启用 / ✗ Key 无效 / ✗ 未配置`。
   新增 `urlhaus.status()` 记录最近一次云查的可观测状态（disabled / valid / invalid / unreachable）。
+- **URLhaus 启动探针** → 服务启动时后台对 URLhaus 做一次无害探针（查询 `example.com`），
+  让自检面板**无需先访问网页**即可显示 `URLhaus 云查 ✓ 已启用`（否则首次查询前一直显示"待验证"）。
 
 **P2 计划**：
 
