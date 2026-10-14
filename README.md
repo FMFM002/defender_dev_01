@@ -161,6 +161,9 @@
 | POST | `/system/check_file` | 同步评分单个文件 + 自动隔离（与 fsmon.feed 同款） |
 | GET | `/system/fsmon/status` | 文件监控状态（模式 USN/polling / 监控目录数 / worker 数 / 队列 / 阈值 / USN watcher 列表） |
 | POST | `/system/fsmon/feed` | 手动注入文件路径（测试 / 扩展调用） |
+| POST | `/alerts/url_block` | 扩展上报 URL 拦截事件（持久化到 url_blocks 表） |
+| GET | `/alerts/history` | 告警历史（参数 type=url/proc/quarantine/all，since=1h/24h/7d/30d/all，limit=1..500） |
+| GET | `/alerts/summary` | 告警摘要：按类型计数 + Top 5 规则（URL/进程/隔离 各一组） |
 
 ## 文件监控 fsmon（P2-1 增强版）
 
@@ -192,6 +195,25 @@ USN / DirectoryWatcher → _EVENT_QUEUE → worker 池 → 应用场景白名单
 - 维护 file_ref → 完整路径 的 LRU 缓存（10 万项上限 ≈ 30 MB）
 - 启动时只有 NTFS 卷根（file_ref=5）已知；后续增量累积
 - 父目录未知的文件创建事件会被跳过（等下次）
+
+## 告警历史可视化页（P2-2）
+
+设置页顶部加 tab 切换：**白名单 / 灰名单** vs **告警历史**。
+
+告警历史 tab 功能：
+- 时间范围 chip：24h / 7d / 30d / 全部
+- 类型 chip：全部 / URL / 进程 / 文件隔离
+- 摘要卡片：今日拦截总数 + 各类型分项
+- Top 5 规则（按 URL / 进程 / 隔离 三组分类聚合）
+- 事件列表（按时间倒序，每条可点击展开看证据）
+- 自动每 30 秒刷新（只在告警 tab 可见时）
+
+数据来源：
+- `url_blocks` 表：Edge 扩展拦截时实时上报（离线时入 chrome.storage.local 队列，hydrate 时 flush）
+- `proc_alerts` 表：WMI 进程监控告警
+- `quarantine` 表：文件自动隔离记录
+
+三类事件在 `/alerts/history` 端点合并按时间倒序返回。
 
 ## 文件监控 P2-1 评分规则
 

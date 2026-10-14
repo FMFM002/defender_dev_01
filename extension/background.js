@@ -25,14 +25,16 @@
 
 // 构建号：每次改动扩展后 +1，用于在设置页"自检"里确认 Edge 是否加载了新代码。
 // 如果自检显示的构建号 ≠ 本文件的 SW_BUILD，说明 edge://extensions 没有点"重新加载"。
-const SW_BUILD = '0.2.1';
+const SW_BUILD = '0.3.2';
 
 const BACKEND = 'http://127.0.0.1:7890';
 const INTEL_URL = BACKEND + '/intel/url';
+const ALERT_URL = BACKEND + '/alerts/url_block';
 const ALARM_REFRESH = 'pc-guardian-refresh';
 const MAL_CACHE_MAX = 2000;
 const URL_MAX_LEN = 3500;
 const CLOUD_TIMEOUT_MS = 2000;
+const ALERT_QUEUE_MAX = 500;     // 离线队列上限（防止后端长时间不可达导致 chrome.storage 爆）
 
 // ===========================================================================
 // 内置默认名单（模块级常量 —— SW 唤醒即可用，不依赖任何异步加载）
@@ -151,6 +153,9 @@ async function hydrate() {
 
   console.log('[PC Guardian] hydrate done v' + SW_BUILD,
     'whitelist=' + CONFIG.whitelist.size, 'grayscale=' + CONFIG.grayscale.size);
+
+  // P2-2: hydrate 完成后尝试 flush 离线告警队列
+  flushAlertQueue().catch(() => {});
 }
 
 // 顶层立即触发一次；SW 每次唤醒都会执行到这里
@@ -381,6 +386,104 @@ function scoreFor(evidence) {
 async function blockAndCache(url, evidence) {
   addToMalCache(url, scoreFor(evidence), evidence);
   scheduleRebuild();
+  // P2-2: 上报拦截事件给后端（失败时入离线队列）
+  reportUrlBlock(url, evidence).catch(() => {});
+}
+
+// ===========================================================================
+// 上报拦截事件（P2-2：告警历史可视化）
+//   - 失败时入 chrome.storage.local 离线队列
+//   - hydrate / alarm 触发时 flush 一次
+// ===========================================================================
+
+function scoreForEvidence(evidence) {
+  if (evidence.some(e => e.layer === 'cloud')) return 80;
+  if (evidence.some(e => e.layer === 'grayscale')) return 60;
+  if (evidence.some(e => e.layer === 'heuristic')) return 45;
+  return 30;
+}
+
+function deriveRule(evidence) {
+  const layers = evidence.map(e => e.layer).filter(Boolean);
+  if (layers.includes('cloud')) return 'cloud';
+  if (layers.includes('grayscale')) return 'grayscale';
+  if (layers.includes('heuristic')) {
+    const heurHit = evidence.find(e => e.layer === 'heuristic')?.hit || '';
+    return 'heuristic:' + heurHit.split(',')[0];
+  }
+  return 'unknown';
+}
+
+async function reportUrlBlock(url, evidence) {
+  const payload = {
+    url,
+    rule: deriveRule(evidence),
+    threat_score: scoreForEvidence(evidence),
+    layers: evidence.map(e => e.layer).filter(Boolean).join('+'),
+    evidence,
+    tab_id: 0,  // SW 拿不到 sender.tab.id（已回收），先记录为 0
+  };
+  try {
+    const r = await fetch(ALERT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('http ' + r.status);
+    // 成功后顺便 flush 一次离线队列
+    flushAlertQueue().catch(() => {});
+    return true;
+  } catch (_) {
+    await enqueueAlert(payload);
+    return false;
+  }
+}
+
+async function enqueueAlert(payload) {
+  try {
+    const stored = await chrome.storage.local.get(['alert_queue']);
+    const queue = Array.isArray(stored.alert_queue) ? stored.alert_queue : [];
+    queue.push(payload);
+    // 超过上限：丢最早的（保留最近事件）
+    while (queue.length > ALERT_QUEUE_MAX) queue.shift();
+    await chrome.storage.local.set({ alert_queue: queue });
+  } catch (_) {}
+}
+
+async function flushAlertQueue() {
+  let stored;
+  try {
+    stored = await chrome.storage.local.get(['alert_queue']);
+  } catch (_) {
+    return;
+  }
+  const queue = Array.isArray(stored.alert_queue) ? stored.alert_queue : [];
+  if (!queue.length) return;
+  const stillPending = [];
+  for (const p of queue) {
+    try {
+      const r = await fetch(ALERT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p),
+      });
+      if (!r.ok) stillPending.push(p);
+    } catch (_) {
+      stillPending.push(p);
+    }
+  }
+  try {
+    await chrome.storage.local.set({ alert_queue: stillPending });
+  } catch (_) {}
+}
+
+async function alertQueueSize() {
+  try {
+    const stored = await chrome.storage.local.get(['alert_queue']);
+    return Array.isArray(stored.alert_queue) ? stored.alert_queue.length : 0;
+  } catch (_) {
+    return 0;
+  }
 }
 
 // ===========================================================================
@@ -461,14 +564,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
   if (msg?.type === 'get_stats') {
-    sendResponse({
-      build: SW_BUILD,
-      mal_cache_size: MAL_CACHE.size,
-      whitelist_size: CONFIG.whitelist.size,
-      grayscale_size: CONFIG.grayscale.size,
-      sandbox_events: SANDBOX_EVENTS,
-    });
-    return false;
+    alertQueueSize().then((q) => {
+        sendResponse({
+          build: SW_BUILD,
+          mal_cache_size: MAL_CACHE.size,
+          whitelist_size: CONFIG.whitelist.size,
+          grayscale_size: CONFIG.grayscale.size,
+          sandbox_events: SANDBOX_EVENTS,
+          alert_queue_size: q,
+        });
+      });
+    return true;
   }
   if (msg?.type === 'ping') {
     sendResponse({ ok: true, build: SW_BUILD });

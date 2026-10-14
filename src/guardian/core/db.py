@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS proc_alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_proc_ts ON proc_alerts(ts DESC);
 
+CREATE TABLE IF NOT EXISTS url_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL,
+    rule TEXT NOT NULL DEFAULT '',         -- blocklist / urlhaus_malicious / graylist / heuristic ...
+    threat_score INTEGER NOT NULL DEFAULT 0,
+    layers TEXT NOT NULL DEFAULT '',        -- 命中的层 cloud/grayscale/heuristic 拼接
+    detail TEXT NOT NULL DEFAULT '',        -- JSON 序列化的 evidence 数组
+    blocked_at INTEGER NOT NULL,
+    tab_id INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_url_block_ts ON url_blocks(blocked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_url_block_url ON url_blocks(url);
+
 CREATE TABLE IF NOT EXISTS domain_blocklist (
     domain TEXT PRIMARY KEY
 );
@@ -335,6 +348,70 @@ class CacheDB:
                 "rules": rules, "evidence": evidence,
             })
         return out
+
+    # ---- url_blocks（Edge 扩展拦截事件）----
+
+    def push_url_block(self, block: dict) -> int:
+        """扩展上报拦截事件。"""
+        import json
+        ts = int(time.time())
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO url_blocks(url, rule, threat_score, layers, detail, blocked_at, tab_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    block.get("url") or "",
+                    block.get("rule") or "",
+                    int(block.get("threat_score") or 0),
+                    block.get("layers") or "",
+                    json.dumps(block.get("evidence") or [], ensure_ascii=False),
+                    ts,
+                    int(block.get("tab_id") or 0),
+                ),
+            )
+            # 软上限：保留最近 2000 条
+            c.execute(
+                "DELETE FROM url_blocks WHERE id NOT IN "
+                "(SELECT id FROM url_blocks ORDER BY id DESC LIMIT 2000)"
+            )
+            return cur.lastrowid
+
+    def list_url_blocks(self, since_ts: int = 0, limit: int = 100) -> list[dict]:
+        import json
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                "SELECT id, url, rule, threat_score, layers, detail, blocked_at, tab_id "
+                "FROM url_blocks WHERE blocked_at >= ? ORDER BY id DESC LIMIT ?",
+                (since_ts, limit),
+            ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                evidence = json.loads(r[5]) if r[5] else []
+            except Exception:
+                evidence = []
+            out.append({
+                "id": r[0], "url": r[1], "rule": r[2], "threat_score": r[3] or 0,
+                "layers": r[4] or "", "evidence": evidence,
+                "blocked_at": r[6], "tab_id": r[7] or 0,
+            })
+        return out
+
+    def url_blocks_count(self, since_ts: int = 0) -> int:
+        with self._lock, self._conn() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM url_blocks WHERE blocked_at >= ?", (since_ts,)
+            ).fetchone()[0]
+
+    def url_blocks_top_rules(self, since_ts: int = 0, limit: int = 5) -> list[tuple[str, int]]:
+        """按 rule 聚合，返回 [(rule, count)] top N。"""
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                "SELECT rule, COUNT(*) AS n FROM url_blocks WHERE blocked_at >= ? "
+                "GROUP BY rule ORDER BY n DESC LIMIT ?",
+                (since_ts, limit),
+            ).fetchall()
+        return [(r[0] or "unknown", r[1]) for r in rows]
 
     # ---- 本地域名黑名单（Phishing Army）----
 
