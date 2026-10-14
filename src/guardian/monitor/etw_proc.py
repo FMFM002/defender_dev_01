@@ -7,16 +7,21 @@
 - P2 阶段如有性能瓶颈可切换 ETW（pyetwkit）
 
 检测规则（命中任一即上报告警）：
-1. 路径在 %TEMP% / %APPDATA% / Downloads（典型恶意软件投放位）
-2. 父进程是浏览器 / Office / 脚本宿主（PowerShell / WScript / cscript / mshta）
-3. 命令行含 -enc / -EncodedCommand / certutil -decode / bitsadmin / InstallUtil / regsvr32
-4. 无签名 PE（P1 暂不做数字签名校验，P2 加）
+1. 父进程是 Office / 脚本宿主（winword / excel / wscript / mshta / rundll32 等）
+2. 父进程是浏览器、但派生了非浏览器进程
+3. 命令行含编码执行 / 远程下载特征（-EncodedCommand / certutil / IEX 等）
+4. 可执行文件落地在 %TEMP% / Downloads
+
+已刻意排除（误报率高）：
+- cmd.exe / powershell.exe 单独作为父进程（终端里跑任何东西都是它们）
+- conhost.exe 等系统控制台宿主进程（一律不报）
 """
 
 from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import datetime
 
 from src.guardian.core.logger import logger
@@ -27,36 +32,69 @@ try:
 except ImportError:
     _HAVE_WMI = False
 
-# 高风险父进程：浏览器/Office/脚本宿主
+# ─────────────────────────────────────────────────────────────────────
+# 进程告警规则（P1，v2 —— 收紧误报）
+#
+# 设计原则：宁可漏报、不可误报（误报会让用户直接关掉防护）。
+#
+# v1 的两个大坑（已在用户真机复现）：
+#   1) 把 cmd.exe / powershell.exe 当"高风险父进程" → 终端里跑任何东西
+#      父进程都是它们，导致连本服务自己（由 start.bat 经 cmd 启动）都告警。
+#   2) 把 %APPDATA% / %LOCALAPPDATA% / \ProgramData\ 当"投放目录" → VSCode、
+#      Teams、Edge 更新等正规软件全从这些目录运行，持续刷屏。
+#
+# v2 策略：用「谁派生谁」的**语义**判断，而不是无差别匹配父进程名。
+# ─────────────────────────────────────────────────────────────────────
+
+# 已知良性子进程：命中即直接放行（系统控制台宿主等，绝不告警）
+BENIGN_CHILDREN = {
+    "conhost.exe", "dllhost.exe", "runtimebroker.exe", "sihost.exe",
+    "ctfmon.exe", "textinputhost.exe", "searchhost.exe", "wmiprvse.exe",
+    "fontdrvhost.exe", "csrss.exe", "wininit.exe", "smss.exe",
+    "lsass.exe", "services.exe", "winlogon.exe", "taskhostw.exe",
+}
+
+# 高风险父进程：Office / 脚本宿主 —— 这些宿主「正常不应」派生任意可执行文件
+# （典型：Word 宏起 powershell、mshta 起木马、wscript 起 exe）
+# 注意：故意不包含 cmd.exe / powershell.exe（见文件头说明）。
 HIGH_RISK_PARENTS = {
-    "chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe",
+    # Office（宏 / 文档漏洞攻击的主战场）
     "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe",
-    "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe",
-    "powershell.exe", "pwsh.exe", "cmd.exe",
+    "visio.exe", "msaccess.exe", "mspub.exe", "onenote.exe",
+    # 脚本宿主 / 代理执行器
+    "wscript.exe", "cscript.exe", "mshta.exe",
+    "rundll32.exe", "regsvr32.exe",
+}
+
+# 浏览器：正常只派生「自己」（helper 进程）；派生「其它」进程才可疑
+BROWSER_PARENTS = {"chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe"}
+BROWSER_HELPERS = {
+    "chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe",
+    "crashpad_handler.exe", "msedge_proxy.exe",
+    "microsoftedgeupdate.exe", "microsoftedgecp.exe",
 }
 
 # 高风险命令行模式（Suspicious）
+# 说明：这些是"落地执行型"特征，正规软件极少出现在命令行里。
 HIGH_RISK_CMDLINE_PATTERNS = [
-    "-enc", "-EncodedCommand", "-WindowStyle Hidden",
+    "-encodedcommand", "-windowstyle hidden",
     "certutil -decode", "certutil -urlcache",
     "bitsadmin /transfer",
-    "InstallUtil",
+    "installutil",
     "regsvr32 /s /n /i:",
     "mshta http",
-    "IEX (New-Object",
-    "Invoke-Expression",
-    "FromBase64String",
-    "Net.WebClient).Download",
+    "iex (new-object",
+    "invoke-expression",
+    "frombase64string",
+    "net.webclient).download",
+    "downloadstring(",
 ]
 
-# 高风险投放路径模板
+# 高风险投放路径：只保留「用户临时 / 下载」这类真正的落地目录。
+# 已移除 %APPDATA% / %LOCALAPPDATA% / \ProgramData\（正规软件也住这里）。
 HIGH_RISK_PATH_TEMPLATES = [
     "%TEMP%",
-    "%APPDATA%",
-    "%LOCALAPPDATA%",
     "\\Downloads\\",
-    "\\ProgramData\\",
-    "\\AppData\\",
 ]
 
 
@@ -89,6 +127,9 @@ class ETWProcessMonitor:
         self._running = False
         self.on_alert = on_alert
         self._alert_count = 0
+        # 告警去重：同一 (进程名, 父进程名, 命中规则) 在窗口内只报一次
+        self._recent: dict[tuple, float] = {}
+        self._dedup_window = 300.0  # 5 分钟
 
     def start(self) -> None:
         if self._running:
@@ -186,6 +227,18 @@ class ETWProcessMonitor:
         if not rules:
             return
 
+        # 5 分钟去重：同一 (进程名, 父进程名, 命中规则) 只上报一次
+        key = ((name or "").lower(), (parent_name or "").lower(), tuple(rules))
+        now = time.time()
+        last = self._recent.get(key)
+        if last is not None and (now - last) < self._dedup_window:
+            return
+        self._recent[key] = now
+        # 轻量清理，避免字典无限增长
+        if len(self._recent) > 500:
+            cutoff = now - self._dedup_window
+            self._recent = {k: t for k, t in self._recent.items() if t >= cutoff}
+
         alert = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "pid": pid,
@@ -230,25 +283,40 @@ def _evaluate(name: str, path: str, cmdline: str, parent_name: str) -> tuple[lis
     rules: list[str] = []
     evidence: list[str] = []
 
-    if parent_name and parent_name.lower() in HIGH_RISK_PARENTS:
-        rules.append("high_risk_parent")
-        evidence.append(f"父进程 {parent_name} 属于浏览器/Office/脚本宿主")
+    n = (name or "").lower()
+    p = (parent_name or "").lower()
 
+    # 0) 已知良性子进程（conhost 等系统进程）直接放行
+    if n in BENIGN_CHILDREN:
+        return [], []
+
+    # 1) 父进程是 Office / 脚本宿主
+    if p and p in HIGH_RISK_PARENTS:
+        rules.append("high_risk_parent")
+        evidence.append(f"父进程 {parent_name} 属于 Office/脚本宿主")
+
+    # 2) 浏览器派生了「非浏览器」进程
+    if p in BROWSER_PARENTS and n not in BROWSER_HELPERS:
+        rules.append("browser_spawn_process")
+        evidence.append(f"浏览器 {parent_name} 派生了 {name}")
+
+    # 3) 命令行命中编码执行 / 远程下载特征
     if cmdline:
         c_lower = cmdline.lower()
         for pat in HIGH_RISK_CMDLINE_PATTERNS:
-            if pat.lower() in c_lower:
+            if pat in c_lower:
                 rules.append("high_risk_cmdline")
                 evidence.append(f"命令行命中模式 {pat!r}")
                 break
 
+    # 4) 可执行文件落地在 %TEMP% / Downloads
     if path:
         p_lower = path.lower()
         for tmpl in HIGH_RISK_PATH_TEMPLATES:
             expanded = os.path.expandvars(tmpl).lower()
             if expanded and p_lower.startswith(expanded):
                 rules.append("env_drop_path")
-                evidence.append(f"路径 {path} 命中高风险模板 {tmpl!r}")
+                evidence.append(f"路径 {path} 命中高风险目录 {tmpl!r}")
                 break
 
     return rules, evidence

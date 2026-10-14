@@ -89,6 +89,8 @@
 - Git Bash 里 `taskkill //F //PID n` 报错 → 用 PowerShell `Stop-Process -Force`
 - 沙箱下 `.git/refs/remotes/` 写入不持久化 → `git status` 显示 `[gone]`，纯噪音；用 `git ls-remote origin` 验证远端
 - Git push：`git ls-remote`/`git fetch` 已可免密；push 若提示要密码，用 token 写 URL 推完立即 reset
+- **`.bat` 必须 CRLF 换行 + 纯 ASCII 内容**：Write 工具默认写 LF+UTF-8，cmd.exe 按 GBK 解析中文会乱码、把 `set` 整行搞坏（PY 变量变空 → 双击闪退）。生成方式：用 Python `open(..., newline="\r\n", encoding="utf-8")` 写、内容不含非 ASCII；结尾加 `pause` 便于看报错。已固化到 `scripts/*.bat`
+- 沙箱限制：Bash 与 PowerShell 工具都**不允许调 cmd.exe**（"bypasses command validation"）；要测 .bat 只能在 Python 脚本里 `subprocess.run(["cmd","/c",...])`（中性化副本、避免真启服务）
 
 ### 已知环境现实（影响设计）
 - OS: Win11 家庭中文版 Build 26200
