@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Build / distribution
+build/
+dist/
+*.spec
+
+# Data (运行时生成，不入版本库)
+data/
+!data/.gitkeep
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志
+*.log
+*.log.*
+logs/
+!data/logs/.gitkeep
+
+# 工作区记忆（每日日志不入库，保留 MEMORY.md）
+.workbuddy/memory/*.md
+!.workbuddy/memory/MEMORY.md
+!.workbuddy/memory/.gitkeep
+
+# 浏览器扩展构建产物（开发期可能生成）
+src/extension/build/
+src/extension/.output/
+*.crx
+*.xpi
+
+# 临时
+tmp/
+temp/
+*.tmp
+*.bak
