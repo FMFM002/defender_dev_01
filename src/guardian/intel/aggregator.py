@@ -19,7 +19,7 @@ import time
 
 from src.guardian.core.db import db
 from src.guardian.core.logger import logger
-from src.guardian.intel import sec_mcp, urlhaus
+from src.guardian.intel import blocklist, sec_mcp, urlhaus
 
 
 def check_url(url: str, use_cache: bool = True) -> dict:
@@ -41,8 +41,16 @@ def check_url(url: str, use_cache: bool = True) -> dict:
 
 
 def _query_all(url: str) -> list[dict]:
-    """多源并行查询。"""
+    """多源查询：本地黑名单同步（快），远端源并行。"""
     results: list[dict] = []
+
+    # 1) 本地域名黑名单 —— 走 SQLite 索引，毫秒级，同步执行
+    try:
+        results.append(blocklist.check_url(url))
+    except Exception as e:
+        logger.warning(f"intel source blocklist crashed: {e}")
+
+    # 2) 远端源并行（URLhaus / sec-mcp）
     threads: list[tuple[threading.Thread, callable]] = []
 
     def _wrap(fn, name):
@@ -131,6 +139,8 @@ def _score(merged: dict) -> int:
     for src in merged["sources"]:
         if src["source"] == "urlhaus" and src["malicious"]:
             score += 30  # URLhaus 明确命中权重最高
+        if src["source"] == "blocklist" and src["malicious"]:
+            score += 20  # 本地钓鱼域名黑名单
     # 多源印证 +10
     malicious_sources = sum(1 for s in merged["sources"] if s["malicious"])
     if malicious_sources >= 2:

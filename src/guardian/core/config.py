@@ -28,6 +28,17 @@ URLHAUS_API = "https://urlhaus-api.abuse.ch/v1/"
 SEC_MCP_API = ""  # sec-mcp 公开接口待确认，先留空
 INTEL_CACHE_TTL_HOURS = 24
 
+# URLhaus Auth-Key（abuse.ch 自 2025-06-30 起强制鉴权；留空则自动跳过 URLhaus）
+# 申请地址（免费）：https://auth.abuse.ch/  →  个人资料 → 创建 Auth-Key
+URLHAUS_AUTH_KEY = os.environ.get("URLHAUS_AUTH_KEY", "").strip()
+
+# 本地域名黑名单（Phishing Army，免 Key 免费，约 16 万条钓鱼域名）
+# 首次启动后台自动下载，之后每 24h 刷新一次；命中走本地 SQLite，毫秒级
+BLOCKLIST_DIR = DATA_DIR / "blocklist"
+PHISHING_ARMY_URL = "https://phishing.army/download/phishing_army_blocklist_extended.txt"
+BLOCKLIST_REFRESH_HOURS = 24
+BLOCKLIST_ENABLED = True
+
 # VPN 代理（SakuraCat-VPN）
 VPN_PROXY_HOST = "127.0.0.1"
 VPN_PROXY_PORT = 7897
@@ -54,7 +65,7 @@ QUARANTINE_AUTO_CLEAN_DAYS = 30
 
 def ensure_dirs() -> None:
     """启动时确保所有目录存在。"""
-    for p in (DATA_DIR, LOGS_DIR, QUARANTINE_DIR, DB_DIR, CONFIG_DIR):
+    for p in (DATA_DIR, LOGS_DIR, QUARANTINE_DIR, DB_DIR, CONFIG_DIR, BLOCKLIST_DIR):
         p.mkdir(parents=True, exist_ok=True)
 
 

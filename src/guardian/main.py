@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import socket
 import sys
+import threading
 
 import uvicorn
 
@@ -28,6 +29,19 @@ from fastapi import FastAPI
 
 app = FastAPI(title="PC Guardian", version="0.1.0")
 app.include_router(router)
+
+
+def _start_blocklist_refresh() -> None:
+    """后台刷新本地域名黑名单（不阻塞启动）。"""
+    def _run():
+        try:
+            from src.guardian.intel import blocklist
+            blocklist.refresh()
+        except Exception as e:
+            logger.warning(f"blocklist 后台刷新失败（不影响其它功能）: {e}")
+
+    t = threading.Thread(target=_run, name="blocklist-refresh", daemon=True)
+    t.start()
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -90,6 +104,9 @@ def main() -> int:
     # ETW 进程监控（设置告警回调，统一走 logger + 内存队列）
     etw_monitor.on_alert = _on_proc_alert
     etw_monitor.start()
+
+    # 本地域名黑名单：后台下载/刷新（首次约 3.4 MB，不阻塞启动）
+    _start_blocklist_refresh()
 
     try:
         uvicorn.run(

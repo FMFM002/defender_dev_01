@@ -43,7 +43,7 @@
   .actions { display: flex; gap: 12px; margin-top: 24px; }
   .btn { padding: 8px 16px; border-radius: 4px; border: 1px solid var(--border);
     background: var(--card); color: var(--text); cursor: pointer; font-size: 14px;
-    text-decoration: none; display: inline-block; }
+    font-family: inherit; text-decoration: none; display: inline-block; }
   .btn:hover { background: #f9fafb; }
   .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
   .btn-primary:hover { background: #1d4ed8; }
@@ -65,12 +65,12 @@
       <div class="evidence-block" id="evidence-list">加载中…</div>
     </details>
     <div class="actions">
-      <a href="javascript:history.back()" class="btn">返回上一页</a>
-      <a href="javascript:window.close()" class="btn">关闭</a>
-      <a href="#" id="whitelist-btn" class="btn">加入白名单</a>
+      <button class="btn" id="back-btn" type="button">返回上一页</button>
+      <button class="btn" id="close-btn" type="button">关闭标签页</button>
+      <button class="btn" id="whitelist-btn" type="button">加入白名单</button>
     </div>
     <div class="footer-note">
-      PC Guardian · 决策依据：云查（URLhaus）+ 灰查（灰名单 / 启发式）+ 沙查（行为）
+      PC Guardian · 决策依据：云查（威胁情报）+ 灰查（灰名单 / 启发式）+ 沙查（行为）
     </div>
   </div>
 </div>

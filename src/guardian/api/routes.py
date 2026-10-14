@@ -62,6 +62,20 @@ def intel_hash(q: HashQuery) -> dict:
     return check_hash(q.sha256)
 
 
+# ---- 本地域名黑名单（Phishing Army）----
+
+@router.get("/intel/blocklist/status")
+def blocklist_status() -> dict:
+    from src.guardian.intel import blocklist
+    return blocklist.status()
+
+
+@router.post("/intel/blocklist/refresh")
+def blocklist_refresh(force: bool = True) -> dict:
+    from src.guardian.intel import blocklist
+    return blocklist.refresh(force=force)
+
+
 # ---- Whitelist ----
 
 class WhitelistAdd(BaseModel):

@@ -53,12 +53,12 @@
 ├── extension/                # Edge MV3 扩展
 │   ├── manifest.json
 │   ├── background.js         # Service Worker（白名单+灰名单+启发式+决策+弹窗）
-│   ├── content_script.js     # 沙查层（eval / 外链 script / iframe 注入监控）
-│   ├── blocked.html          # 拦截页（紧凑+展开）
-│   ├── options.html          # 白名单管理
-│   └── config/default_whitelist.json
-├── scripts/
-│   └── apply_asr.bat         # 双击自动提权
+│   ├── content_script.js     # 沙查层（eval / 外链 script / iframe 注入监控；P1 仅观测计数）
+│   ├── blocked.html + blocked.js   # 拦截页（紧凑+展开）※ JS 必须独立文件
+│   ├── options.html + options.js   # 白名单管理 ※ JS 必须独立文件
+│   ├── icons/icon-16|48|128.png    # 盾牌图标（通知弹窗也依赖）
+│   └── config/default_whitelist.json  # 35 白名单 + 19 灰名单 + 启发式
+├── scripts/                  # start.bat / stop.bat / apply_asr.bat（CRLF+纯ASCII）
 ├── config/default_whitelist.json
 ├── data/                     # 不入 git
 │   ├── db/guardian.db        # SQLite WAL
@@ -76,10 +76,15 @@
 - 推送到 GitHub: commit 9b1c9ef
 
 ### 关键技术选型（实施时验证）
-- **进程监控选 WMI 而非 pyetwkit**：pyetwkit ��译复杂，pywin32 单 binary 依赖即可；WMI 延迟秒级对进程告警够用
+- **进程监控选 WMI 而非 pyetwkit**：pyetwkit 编译复杂，pywin32 单 binary 依赖即可；WMI 延迟秒级对进程告警够用
+- **MV3 扩展页面禁止内联脚本**：CSP `script-src 'self'`，HTML 里的内联 `<script>` **一律不执行**（拦截页会永远"加载中"）。所有 JS 必须独立成文件、用 `<script src=...>` 引用。已踩坑：blocked/options 均中招
+- **MV3 扩展 manifest 引用的文件必须真实存在**：含 `icons/*.png`，缺失任何一个 Edge 直接拒绝加载扩展
+- **白名单合并语义**：内置默认白名单 始终生效，用户白名单从后端合并（默认 ∪ 用户），后端结果**不可整体覆盖** CONFIG.whitelist
 - **URLhaus 401 = 正常**：无害域名 URLhaus 拒查询（query_status=invalid），HTTP 401 在 result 内 status='error'、malicious=False → 不算云查异常
 - **内存优化**：`_LazyDB` 让 SQLite 初始化延迟到首次调用，import 时 RSS 从 79MB → 48MB
 - **WMI NextEvent 超时是正常控制流**：无事件时每秒抛超时异常（中文"已超时" / HRESULT -2147209215），必须静默 continue，否则日志被刷屏。识别函数：`etw_proc._is_wmi_timeout()`
+- **进程告警规则要按"谁派生谁"语义**：cmd/powershell 不能当高风险父进程（终端里啥都从它起）；conhost/dllhost 等系统进程应放行；投放目录只留 %TEMP% 与 \Downloads\
+- **启发式阈值宁缺毋滥**：`login/account/update` 等通用词按 URL 路径匹配会误拦正常站点，已停用该关键词列表
 - **WMI 进程监控需管理员权限**：非管理员订阅 `Win32_ProcessStartTrace` 报"拒绝访问"，已降级为友好 WARNING（不影响 URL 拦截）
 - **单实例保护**：main.py 启动前检测 7890 端口，占用时打印占用 PID；`scripts/stop.bat` 一键释放
 - **进程告警规则 v2（2026-10-14 收紧误报）**：v1 把 `cmd.exe`/`powershell.exe` 当高风险父进程 + 把 `%APPDATA%`/`%LOCALAPPDATA%` 当投放目录 → 误报刷屏（连本服务自己都报）。v2 改为语义化判断：

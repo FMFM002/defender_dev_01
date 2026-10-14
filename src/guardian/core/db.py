@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS proc_alerts (
     evidence TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_proc_ts ON proc_alerts(ts DESC);
+
+CREATE TABLE IF NOT EXISTS domain_blocklist (
+    domain TEXT PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -300,6 +309,59 @@ class CacheDB:
                 "rules": rules, "evidence": evidence,
             })
         return out
+
+    # ---- 本地域名黑名单（Phishing Army）----
+
+    def replace_domain_blocklist(self, domains: list[str]) -> int:
+        """整表替换（单事务，快速）。返回写入条数。"""
+        rows = [(d,) for d in domains]
+        with self._lock, self._conn() as c:
+            c.execute("BEGIN")
+            c.execute("DELETE FROM domain_blocklist")
+            c.executemany("INSERT OR IGNORE INTO domain_blocklist(domain) VALUES (?)", rows)
+            c.execute("COMMIT")
+        return len(rows)
+
+    def is_blocked_domain(self, host: str) -> str | None:
+        """命中返回被匹配的域名（含父域回溯），未命中返回 None。"""
+        host = (host or "").lower().strip(".")
+        if not host:
+            return None
+        labels = host.split(".")
+        # 从完整域名逐级回退到注册域（最多 6 级，够用且快）
+        candidates = []
+        for i in range(len(labels)):
+            if len(labels) - i < 2:
+                break
+            candidates.append(".".join(labels[i:]))
+            if len(candidates) >= 6:
+                break
+        if not candidates:
+            return None
+        placeholders = ",".join("?" * len(candidates))
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                f"SELECT domain FROM domain_blocklist WHERE domain IN ({placeholders}) LIMIT 1",
+                candidates,
+            ).fetchone()
+        return rows[0] if rows else None
+
+    def domain_blocklist_count(self) -> int:
+        with self._lock, self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM domain_blocklist").fetchone()[0]
+
+    # ---- meta（键值存储）----
+
+    def meta_get(self, key: str) -> str | None:
+        with self._lock, self._conn() as c:
+            row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        with self._lock, self._conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, str(value))
+            )
 
 
 class _LazyDB:

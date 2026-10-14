@@ -10,8 +10,7 @@
     "webNavigation",
     "downloads",
     "storage",
-    "alarms",
-    "notifications"
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"
