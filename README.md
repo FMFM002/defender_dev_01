@@ -18,8 +18,9 @@
 ├─ Edge 扩展（MV3 主防线）：白名单 + 灰名单 + 启发式 + declarativeNetRequest 动态规则 + 拦截页
 ├─ 本地后台服务（数据中枢）：FastAPI 端口 7890
 │   ├─ 威胁情报聚合：本地域名黑名单（Phishing Army，免 Key）+ URLhaus（可选，需 Auth-Key）+ sec-mcp
-│   ├─ 文件哈希云查（P1 占位，P2 接 VirusTotal）
-│   ├─ 隔离区管理（开发期复制 + 保留原文件）
+│   ├─ **文件监控 fsmon（P2-1）**：5 个用户态关键目录轮询 → MalwareBazaar 云查 + 文件启发式 → ≥70 自动隔离
+│   ├─ 文件哈希云查：MalwareBazaar（abuse.ch Key，与 URLhaus 通用）
+│   ├─ 隔离区管理（开发期复制 + 保留原文件，30 天后自动清理）
 │   ├─ WMI/ETW 进程监控（高风险父进程 + 危险命令行 + 投放路径）
 │   ├─ ASR 规则写入（独立工具，需管理员）
 │   └─ 用户白名单 / 灰名单
@@ -154,6 +155,32 @@
 | GET | `/proc_alerts?limit=N` | 最近进程告警 |
 | GET | `/intel/blocklist/status` | 本地域名黑名单状态（条数 / 上次刷新） |
 | POST | `/intel/blocklist/refresh` | 立即刷新本地域名黑名单 |
+| POST | `/system/check_file` | 同步评分单个文件 + 自动隔离（与 fsmon.feed 同款） |
+| GET | `/system/fsmon/status` | 文件监控状态（启动 / 监控目录数 / worker 数 / 队列 / 阈值） |
+| POST | `/system/fsmon/feed` | 手动注入文件路径（测试 / 扩展调用） |
+
+## 文件监控 P2-1 评分规则
+
+| 维度 | 加分 | 备注 |
+|---|---|---|
+| 可执行后缀 (.exe/.bat/.ps1/.vbs/.js/.lnk/.msi/.com 等 24 类) | +30 | 落地文件后缀 |
+| 文件名含可疑关键词 (crack/keygen/patch/installer/setup/activator/loader 等 11 词) | +20 | 落地文件名 |
+| 无数字签名（仅对可执行类检查） | +20 | `WinVerifyTrust` |
+| 来源目录落入 Startup 启动项 | +30 | 持久化意图 |
+| 来源目录落入 %TEMP% | +15 | 解压/脚本中转 |
+| 来源目录落入 Desktop | +10 | 钓鱼诱导 |
+| 来源目录落入 Downloads | +5 | 浏览器落地 |
+| 来源目录落入 AppData\Local（**非已知厂商子目录**）| +5 | 厂商目录已豁免 |
+| 大文件（>100MB） | -5 | 多为合法安装包 |
+| **EICAR 标准测试串**命中（文件内容嗅探） | +50 | 业内公认测试样本 |
+| MalwareBazaar 云查命中 | +80 | abuse.ch 数据库 |
+
+**阈值 ≥ 70 自动移入 `data/quarantine/`** 并写 SQLite。可疑但未达阈值的放行，只记录哈希缓存。
+
+### 安装行为豁免
+
+5 秒滑动窗口内同一目录新增 ≥ 3 个可执行后缀文件 → 标记为"安装噪声"，**单文件仍走评分但日志聚合**。
+合法安装包（如 `%LOCALAPPDATA%\Programs\xxx\`）会被 `NOISY_VENDOR_DIRS`（Microsoft/Google/VSCode/Discord/Spotify/Steam/NVIDIA/JetBrains/Docker/Python/nodejs 等）**完全豁免**——监控器对其内新文件 0 开销。
 
 ## 测试方法（真机验收）
 
@@ -192,6 +219,17 @@ URLHAUS_AUTH_KEY=你的Auth-Key
 - 也可用系统环境变量 `URLHAUS_AUTH_KEY`（优先级高于 `.env`）。
 
 ## 状态
+
+**P2-1 阶段完成**（自动文件隔离）：
+
+✅ **MalwareBazaar 文件哈希云查**（复用 abuse.ch Key，与 URLhaus 通用）  
+✅ **文件启发式评分**（可执行后缀 + 文件名关键词 + 来源目录 + 数字签名 + EICAR 标准串嗅探）  
+✅ **ReadDirectoryChangesW 风格的文件监控 fsmon**（5 个用户态关键目录轮询，1s 粒度，可忽略系统/厂商子目录）  
+✅ **自动隔离链路**（评分 ≥70 → 复制到 `data/quarantine/<ts>_<sha16>_<name>` + 写 SQLite）  
+✅ **安装行为豁免**（5s 内同目录 ≥3 个可执行后缀 → 聚合日志但单文件仍评）  
+✅ **API 扩展**：`POST /system/check_file`、`GET /system/fsmon/status`、`POST /system/fsmon/feed`  
+✅ **还原/彻底删除** 端到端实测通过  
+✅ 端到端实测：用 `kms_auto.exe` / `photoshop_crack_setup.exe` 落到 Downloads 静默击中，score=70~75 自动 quarantine
 
 **P1 阶段完成**：
 

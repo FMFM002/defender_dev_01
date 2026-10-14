@@ -16,6 +16,11 @@
   POST /quarantine/{id}/restore     - 恢复
   DELETE /quarantine/{id}           - 彻底删除
   GET  /asr/rules                   - 列出 ASR 规则 + 当前状态
+  GET  /proc_alerts                 - 最近进程告警
+  POST /system/check_file           - 文件监控评分 + 自动隔离（fsmon.feed）
+  GET  /system/fsmon/status         - 文件监控状态
+  POST /system/fsmon/feed           - 手动注入文件路径（测试）
+  POST /system/quarantine/check     - 同步评估单个文件
 """
 
 from __future__ import annotations
@@ -168,3 +173,39 @@ def asr_rules() -> dict:
 def proc_alerts(limit: int = 50) -> dict:
     """最近进程告警（高风险父进程 / 命令行 / 投放路径）。"""
     return {"items": db.list_proc_alerts(limit=min(max(limit, 1), 200))}
+
+
+# ---- 文件监控（P2-1）----
+
+class CheckFile(BaseModel):
+    path: str = Field(..., min_length=1)
+    source_dir: str = ""
+
+
+@router.post("/system/check_file")
+@router.post("/system/quarantine/check")  # alias
+def system_check_file(req: CheckFile) -> dict:
+    """对单个文件做完整评分 + 自动隔离（fsmon 检查同款接口）。"""
+    from src.guardian.quarantine.manager import check_and_quarantine
+    return check_and_quarantine(req.path, source_dir=req.source_dir)
+
+
+@router.get("/system/fsmon/status")
+def system_fsmon_status() -> dict:
+    from src.guardian.quarantine import fsmon
+    info = fsmon.status()
+    info["config"] = {
+        "watch_dirs_count": len(getattr(fsmon, "FSMON_WATCH_DIRS", [])),
+        "watch_dirs": [d for d in getattr(fsmon, "FSMON_WATCH_DIRS", []) if d],
+        "workers": getattr(fsmon, "FSMON_WORKER_THREADS", None),
+        "threshold": __import__("src.guardian.core.config", fromlist=["QUARANTINE_SCORE_THRESHOLD"]).QUARANTINE_SCORE_THRESHOLD,
+        "keep_original": __import__("src.guardian.core.config", fromlist=["QUARANTINE_KEEPORIGINAL"]).QUARANTINE_KEEPORIGINAL,
+    }
+    return info
+
+
+@router.post("/system/fsmon/feed")
+def system_fsmon_feed(req: CheckFile) -> dict:
+    """手动喂一个文件路径给 fsmon 处理（测试 / 扩展使用）。"""
+    from src.guardian.quarantine import fsmon
+    return fsmon.feed(req.path)

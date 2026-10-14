@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS quarantine (
     sha256 TEXT NOT NULL,
     quarantined_at INTEGER NOT NULL,
     reason TEXT NOT NULL,
-    file_size INTEGER NOT NULL DEFAULT 0
+    file_size INTEGER NOT NULL DEFAULT 0,
+    source_dir TEXT NOT NULL DEFAULT '',
+    threat_score INTEGER NOT NULL DEFAULT 0,
+    signature_status TEXT NOT NULL DEFAULT 'unknown'
 );
 CREATE INDEX IF NOT EXISTS idx_quar_sha ON quarantine(sha256);
 
@@ -109,6 +112,15 @@ class CacheDB:
     def _init_schema(self) -> None:
         with self._lock, self._conn() as c:
             c.executescript(_SCHEMA)
+            # 兼容老库：补齐 quarantine 表的可选列（无则 ALTER TABLE）
+            cur = c.execute("PRAGMA table_info(quarantine)")
+            cols = {r[1] for r in cur.fetchall()}
+            if "source_dir" not in cols:
+                c.execute("ALTER TABLE quarantine ADD COLUMN source_dir TEXT NOT NULL DEFAULT ''")
+            if "threat_score" not in cols:
+                c.execute("ALTER TABLE quarantine ADD COLUMN threat_score INTEGER NOT NULL DEFAULT 0")
+            if "signature_status" not in cols:
+                c.execute("ALTER TABLE quarantine ADD COLUMN signature_status TEXT NOT NULL DEFAULT 'unknown'")
             logger.debug(f"CacheDB schema initialized at {self._path}")
 
     # ---- URL cache ----
@@ -224,25 +236,39 @@ class CacheDB:
 
     # ---- quarantine ----
 
-    def quarantine_add(self, original_path: str, sha256: str, reason: str, file_size: int) -> int:
+    def quarantine_add(
+        self,
+        original_path: str,
+        sha256: str,
+        reason: str,
+        file_size: int,
+        source_dir: str = "",
+        threat_score: int = 0,
+        signature_status: str = "unknown",
+    ) -> int:
         now = int(time.time())
         with self._lock, self._conn() as c:
             cur = c.execute(
-                "INSERT INTO quarantine(original_path, sha256, quarantined_at, reason, file_size) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (original_path, sha256, now, reason, file_size),
+                "INSERT INTO quarantine(original_path, sha256, quarantined_at, reason, file_size, "
+                "source_dir, threat_score, signature_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (original_path, sha256, now, reason, file_size,
+                 source_dir, threat_score, signature_status),
             )
             return cur.lastrowid
 
     def quarantine_list(self) -> list[dict]:
         with self._lock, self._conn() as c:
             rows = c.execute(
-                "SELECT id, original_path, sha256, quarantined_at, reason, file_size "
+                "SELECT id, original_path, sha256, quarantined_at, reason, file_size, "
+                "source_dir, threat_score, signature_status "
                 "FROM quarantine ORDER BY quarantined_at DESC"
             ).fetchall()
         return [
             {"id": r[0], "original_path": r[1], "sha256": r[2],
-             "quarantined_at": r[3], "reason": r[4], "file_size": r[5]}
+             "quarantined_at": r[3], "reason": r[4], "file_size": r[5],
+             "source_dir": r[6] or "", "threat_score": r[7] or 0,
+             "signature_status": r[8] or "unknown"}
             for r in rows
         ]
 

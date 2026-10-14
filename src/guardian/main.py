@@ -65,6 +65,39 @@ def _start_urlhaus_probe() -> None:
     t.start()
 
 
+def _start_fsmon() -> None:
+    r"""启动文件系统监控（P2-1）。
+
+    监控 Downloads / Desktop / TEMP / Startup / AppData\Local 的新增文件；
+    自动触发 MalwareBazaar 云查 + 本地启发式评分；>= 阈值自动移入 quarantine/。
+    """
+    def _run():
+        try:
+            from src.guardian.quarantine import fsmon
+            fsmon.start()
+        except Exception as e:
+            logger.warning(f"fsmon 启动失败（不影响其它功能）: {e}")
+
+    t = threading.Thread(target=_run, name="fsmon-bootstrap", daemon=True)
+    t.start()
+
+
+def _start_quarantine_cleanup() -> None:
+    """每日清理 30 天前的隔离记录（开发期安全网）。"""
+    import time
+    def _loop():
+        from src.guardian.quarantine import manager as qm
+        while True:
+            try:
+                qm.auto_clean()
+            except Exception:
+                pass
+            time.sleep(24 * 3600)
+
+    t = threading.Thread(target=_loop, name="quarantine-cleanup", daemon=True)
+    t.start()
+
+
 def _port_in_use(host: str, port: int) -> bool:
     """检测端口是否已被占用。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -131,6 +164,12 @@ def main() -> int:
 
     # URLhaus 云查：后台探针一次，让自检面板立即显示 Key 是否有效
     _start_urlhaus_probe()
+
+    # 文件监控（P2-1）：后台启动，不阻塞 uvicorn
+    _start_fsmon()
+
+    # 隔离区每日清理
+    _start_quarantine_cleanup()
 
     try:
         uvicorn.run(
