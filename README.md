@@ -61,6 +61,8 @@
 │   └── config/
 │       └── default_whitelist.json
 ├── scripts/
+│   ├── start.bat             # 双击启动本地服务
+│   ├── stop.bat              # 双击停止服务（释放 7890 端口）
 │   └── apply_asr.bat         # 双击运行（自动提权）启用 P1 ASR 规则
 ├── config/
 │   └── default_whitelist.json
@@ -98,11 +100,17 @@
 ## 启动方式
 
 ### 后台服务
+
+**方式一（推荐）**：双击 `scripts\start.bat` 启动；停止双击 `scripts\stop.bat`。
+
+**方式二**：命令行
 ```bash
-# 用 venv 的 Python 跑
+# 用 venv 的 Python 跑（依赖齐全）
 "C:\Users\farma\.workbuddy\binaries\python\envs\pc-guardian\Scripts\python.exe" \
     -m src.guardian.main
 ```
+
+> 端口冲突时：服务会提示占用进程的 PID，或双击 `scripts\stop.bat` 一键清理。
 
 ### Edge 扩展
 1. 打开 `edge://extensions/`

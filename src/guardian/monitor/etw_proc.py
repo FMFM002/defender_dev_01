@@ -143,21 +143,29 @@ class ETWProcessMonitor:
 
         while not self._stop.is_set():
             try:
-                # Next() 默认阻��等待，timeout=-1 表示无限
+                # NextEvent(timeout_ms) 无事件时抛超时异常；这是正常现象，
+                # 静默 continue（如果打日志会每秒刷一条）。
                 ev = watcher.NextEvent(1000)  # 1 秒超时便于响应 stop
                 if ev is None:
                     continue
                 self._handle_event(ev)
             except Exception as e:
-                # WMI 超时时抛特定异常
-                err_str = str(e)
-                if "timed out" in err_str.lower() or "0x80041004" in err_str:
-                    continue
+                if _is_wmi_timeout(e):
+                    continue  # 无事件，正常
                 logger.warning(f"ETWProcessMonitor: WMI 事件循环错误: {e}")
                 # 出现非超时错误，短暂退避后继续
                 self._stop.wait(2.0)
+        # 释放 COM 引用（局部变量，逐个删除以尽快回收）
         try:
             del watcher
+        except Exception:
+            pass
+        try:
+            del svc
+        except Exception:
+            pass
+        try:
+            del wmi
         except Exception:
             pass
         if pythoncom:
@@ -197,6 +205,25 @@ class ETWProcessMonitor:
                 self.on_alert(alert)
             except Exception as e:
                 logger.warning(f"ETWProcessMonitor: on_alert 回调异常: {e}")
+
+
+def _is_wmi_timeout(e: Exception) -> bool:
+    """判断异常是否为 WMI 事件源超时（无事件）。
+
+    NextEvent(timeout) 在无事件时抛超时异常，这是正常控制流，
+    不应记录为告警。需要兼容中英文与 HRESULT。
+    """
+    s = str(e)
+    low = s.lower()
+    if "已超时" in s or "timed out" in low or "timeout" in low:
+        return True
+    # WMI 事件源超时的 HRESULT（用户日志中观察到 -2147209215）
+    if "-2147209215" in s:
+        return True
+    hr = getattr(e, "hresult", None)
+    if hr == -2147209215:
+        return True
+    return False
 
 
 def _evaluate(name: str, path: str, cmdline: str, parent_name: str) -> tuple[list[str], list[str]]:

@@ -19,6 +19,10 @@
 - **证据链展示**：拦截页紧凑 + 点详情展开
 - **Git**：启用；用户习惯推到 GitHub，需要时主动问 remote 地址
 - **VPN**：SakuraCat-VPN，全局模式，SOCKS5+HTTP 都监听 7897；代码里要主动探测代理端口是否可用、有就用、没有跳过
+  - **2026-10-14 14:00 起**：用户保持 VPN 开启（开 GitHub 仓库时启动后没关）。意味着：
+    - Git push/clone 走代理（已配置 http.proxy = http://127.0.0.1:7897）
+    - 威胁情报查询（URLhaus）默认走代理 → URLhaus 401 现象需重新评估（之前测试时 VPN 状态不一致）
+    - 如果代理失效/被切回直连，记得提醒用户
 - **日志**：全量进文件，拦截页只��示用户需要知道的；按天切、保留 30 天
 - **验收方式**：用户真机测试；本项目要带 DEBUG 级 logger
 - **开发节奏**：一气写完到 P1 才停下让用户验收
@@ -30,32 +34,51 @@
 - 用户自己挑 MCP / 专家 / skill 嫌烦，让我自己决定（本项目判断：暂不需要任何内置 skill 或 MCP）
 - 通用安全提醒：用户默认 VPN 开、访问非白名单、下载未知文件
 
-### 项目结构（拟）
+### 项目结构（实际）
 ```
 电脑防毒/
 ├── 项目构建指南.txt          # 用户输入的需求
 ├── .workbuddy/memory/        # 本项目记忆
+├── README.md                 # 项目主 README（P1 完成）
 ├── src/
-│   ├── guardian/             # 本地后台服务（Python）
-│   │   ├── core/             # 启动 / 配置 / 日志
-│   │   ├── intel/            # 威胁情报聚合（URLhaus + sec-mcp）
-│   │   ├── monitor/          # ETW 进程监控 + USN Journal + 内存监控
-│   │   ├── asr/              # ASR 规则注册表写入
-│   │   ├── quarantine/       # 隔离区管理
-│   │   └── api/              # FastAPI：与扩展通信的 HTTP 接口
-│   └── extension/            # Edge 扩展（Manifest V3）
-│       ├── manifest.json
-│       ├── background/       # Service Worker
-│       ├── content/          # Content Script（JS 行为监控）
-│       ├── rules/            # declarativeNetRequest 规则
-│       └── pages/            # 拦截页 / 设置页
+│   └── guardian/             # 本地后台服务（Python）
+│       ├── core/             # config / logger / memguard / proxy
+│       ├── intel/            # URLhaus + sec-mcp + aggregator
+│       ├── monitor/          # WMI/ETW 进程监控（实际用 WMI）
+│       ├── asr/              # ASR 规则注册表写入（19 条字典）
+│       ├── quarantine/       # 隔离区管理
+│       ├── tools/            # apply_asr.py（独立工具）
+│       ├── api/              # FastAPI 路由
+│       └── main.py           # 启动入口
+├── extension/                # Edge MV3 扩展
+│   ├── manifest.json
+│   ├── background.js         # Service Worker（白名单+灰名单+启发式+决策+弹窗）
+│   ├── content_script.js     # 沙查层（eval / 外链 script / iframe 注入监控）
+│   ├── blocked.html          # 拦截页（紧凑+展开）
+│   ├── options.html          # 白名单管理
+│   └── config/default_whitelist.json
+├── scripts/
+│   └── apply_asr.bat         # 双击自动提权
+├── config/default_whitelist.json
 ├── data/                     # 不入 git
-│   ├── quarantine/
-│   ├── db/
-│   └── logs/
-├── config/                   # 默认白名单等
+│   ├── db/guardian.db        # SQLite WAL
+│   ├── logs/guardian-YYYY-MM-DD.log
+│   └── quarantine/
 └── tests/
 ```
+
+### P1 阶段完成（2026-10-14）
+- 后台服务：FastAPI 13 个端点、URLhaus 集成、WMI 进程监控、ASR 规则、SQLite 缓存、内存守护
+- Edge MV3 扩展：manifest + SW + content script + 拦截页 + options 页 + 默认白名单
+- 告警策略：云查/灰查/沙查 任一异常 → 弹窗带证据（用户硬性要求）
+- ASR 独立工具：scripts/apply_asr.bat（双击）+ src/guardian/tools/apply_asr.py
+- 内存基线 ~73 MB，idle 上限 80 MB，peak 上限 150 MB
+- 推送到 GitHub: commit 9b1c9ef
+
+### 关键技术选型（实施时验证）
+- **进程监控选 WMI 而非 pyetwkit**：pyetwkit ��译复杂，pywin32 单 binary 依赖即可；WMI 延迟秒级对进程告警够用
+- **URLhaus 401 = 正常**：无害域名 URLhaus 拒查询（query_status=invalid），HTTP 401 在 result 内 status='error'、malicious=False → 不算云查异常
+- **内存优化**：`_LazyDB` 让 SQLite 初始化延迟到首次调用，import 时 RSS 从 79MB → 48MB
 
 ### 已知环境现实（影响设计）
 - OS: Win11 家庭中文版 Build 26200

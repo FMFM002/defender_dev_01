@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import socket
 import sys
 
 import uvicorn
@@ -29,8 +30,57 @@ app = FastAPI(title="PC Guardian", version="0.1.0")
 app.include_router(router)
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """检测端口是否已被占用。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((host, port))
+            return False
+        except OSError:
+            return True
+
+
+def _find_pid_on_port(port: int) -> int | None:
+    """尝试找出占用端口的 PID（仅 Windows）。"""
+    if sys.platform != "win32":
+        return None
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        for line in out.splitlines():
+            if f":{port} " in line and "LISTENING" in line.upper():
+                parts = line.split()
+                if parts and parts[-1].isdigit():
+                    return int(parts[-1])
+    except Exception:
+        pass
+    return None
+
+
 def main() -> int:
     ensure_dirs()
+
+    # 单实例保护：端口已占用 = 已有一个实例在跑，避免 uvicorn 报原始错误。
+    if _port_in_use(HOST, PORT):
+        pid = _find_pid_on_port(PORT)
+        logger.error(
+            f"端口 {PORT} 已被占用 —— 可能已有一个 PC Guardian 实例在运行。"
+            + (f" 占用进程 PID={pid}。" if pid else "")
+            + f" 请先结束该进程（taskkill /PID <pid> /F），或改用其它端口。"
+        )
+        print(
+            f"\n[PC Guardian] 启动失败：端口 {HOST}:{PORT} 已被占用。\n"
+            + (f"  占用进程 PID = {pid}\n" if pid else "")
+            + f"  处理方式：在 PowerShell 执行  Stop-Process -Id {pid or '<pid>'} -Force\n"
+            + f"  然后重新运行。\n",
+            file=sys.stderr,
+        )
+        return 2
+
     logger.info(f"PC Guardian starting on {HOST}:{PORT}")
 
     # 内存守护
