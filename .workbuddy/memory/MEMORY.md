@@ -4,7 +4,7 @@
 
 ### 关键决策（2026-10-14 与用户确认）
 - **浏览器覆盖**：仅 Edge（Manifest V3）
-- **威胁情报**：免 Key 源起步（URLhaus + sec-mcp），不申请 Google Safe Browsing / VirusTotal
+- **威胁情报**：本地域名黑名单（Phishing Army，免 Key）为主 + URLhaus（Auth-Key 已配，2026-10-14 打通），不申请 Google Safe Browsing / VirusTotal
 - **LLM 裁决**：做成可选项，默认不启用；云端 API 后续用户可填
 - **拦截深度**：ASR 注册表规则 + ETW 进程监控，不写 DLL、不上驱动
 - **运行方式**：开发期直接跑 Python（不打包 exe）
@@ -69,7 +69,7 @@
 ```
 
 ### P1 阶段完成（2026-10-14）
-- 后台服务：FastAPI 13 个端点、URLhaus 集成、WMI 进程监控、ASR 规则、SQLite 缓存、内存守护
+- 后台服务：FastAPI 16 个端点（含 `/intel/status`）、URLhaus 集成、WMI 进程监控、ASR 规则、SQLite 缓存、内存守护
 - Edge MV3 扩展：manifest + SW + content script + 拦截页 + options 页 + 默认白名单
 - 告警策略：云查/灰查/沙查 任一异常 → 弹窗带证据（用户硬性要求）
 - ASR 独立工具：scripts/apply_asr.bat（双击）+ src/guardian/tools/apply_asr.py
@@ -82,7 +82,8 @@
 - **MV3 扩展 manifest 引用的文件必须真实存在**：含 `icons/*.png`，缺失任何一个 Edge 直接拒绝加载扩展
 - **白名单合并语义**：内置默认白名单 始终生效，用户白名单从后端合并（默认 ∪ 用户），后端结果**不可整体覆盖** CONFIG.whitelist
 - **URLhaus 401 = abuse.ch 强制鉴权**（2026-10-14 确认）：abuse.ch 自 2025-06-30 起对所有 API 强制 Auth-Key，无 Key 一律 HTTP 401 `{"error":"Unauthorized"}`。「免 Key 逐条查询」路线作废
-  - 已支持可选 Auth-Key（环境变量 `URLHAUS_AUTH_KEY`）；未配置 → `status='disabled'`、只提示一次、不再刷 401
+  - 已支持可选 Auth-Key（`.env` 的 `URLHAUS_AUTH_KEY` 或同名系统环境变量）；未配置 → `status='disabled'`、只提示一次、不再刷 401
+  - **2026-10-14 16:10 Key 打通**：用户重新生成的 Key（48 hex）写入 `.env` 后实测有效。区分信号：无效 → 403 `unknown_auth_key`；有效 → `no_results`/`ok`。生成要点：auth.abuse.ch 连满 **≥2 个**登录方式 + 点 Save profile + Optional 区 Generate Key（别重复点，会作废旧 Key）
   - 替代主源：**Phishing Army 本地域名黑名单**（`intel/blocklist.py`，约 15.9 万条、3.4 MB、免 Key）
     - 整表下载 → SQLite `domain_blocklist` 表；查询走主键索引（逐级回溯父域，最多 6 级），毫秒级、不吃内存
     - 启动后台线程自动下载 + 每 24h 刷新；命中评分 70（基础 50 + blocklist 20），`threat='phishing_domain'`
@@ -119,6 +120,13 @@
 - **名单覆盖防御**：`hydrate()` 合并后若 `Set` 为空则**不覆盖**已有默认值，杜绝"后端白名单为空 → 整体覆盖 → 完全不拦截"复现
 - **进程误报**：Edge 正常派生的 `identity_helper.exe` 等官方 helper 不再告警。新增 `BROWSER_INSTALL_DIRS` 路径判定（`\microsoft\edge\application\` 等）+ 扩充 `BROWSER_HELPERS` 名单。`evil.exe` 从 `%TEMP%` 由 msedge 派生仍正常告警
 - manifest 版本 0.1.0 → **0.2.0**
+
+### v0.2.1（2026-10-14 16:10）
+- **URLhaus Key 打通**：有效 Key 写入 `.env`；端到端验证 `http://<ip>:<port>/bin.sh`（Mozi）→ 聚合器 `malicious=true / malware_download / 评分 80`
+- **威胁情报状态可视化**：新增 `GET /intel/status` = `{blocklist:{count,...}, urlhaus:{configured,key_len,state,detail}}`
+  - `urlhaus.status()` 记录最近云查状态：disabled / valid / invalid / unreachable / unknown
+  - 扩展自检面板新增两行：`本地黑名单：N 条`、`URLhaus 云查：✓已启用/✗Key无效/✗未配置`
+- manifest 版本 → **0.2.1**；commit `85bd815` 已推 GitHub
 
 ### 环境操作经验（Windows + Git Bash 坑）
 - PowerShell 工具输出偶尔被吞 → 用 `Out-File` 写 C:\Temp\*.txt 再 Read

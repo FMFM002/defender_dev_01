@@ -25,7 +25,7 @@
 
 // 构建号：每次改动扩展后 +1，用于在设置页"自检"里确认 Edge 是否加载了新代码。
 // 如果自检显示的构建号 ≠ 本文件的 SW_BUILD，说明 edge://extensions 没有点"重新加载"。
-const SW_BUILD = '0.2.0';
+const SW_BUILD = '0.2.1';
 
 const BACKEND = 'http://127.0.0.1:7890';
 const INTEL_URL = BACKEND + '/intel/url';
