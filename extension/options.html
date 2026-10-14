@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PC Guardian · 设置</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1f2937; }
+  h1 { font-size: 20px; margin-bottom: 8px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
+  textarea { width: 100%; min-height: 280px; padding: 10px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; }
+  .row { display: flex; gap: 12px; margin-top: 12px; }
+  button { padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white;
+    border-radius: 4px; cursor: pointer; font-size: 14px; }
+  button.secondary { background: white; color: #2563eb; }
+  .stats { background: #f3f4f6; padding: 12px; border-radius: 4px; margin-bottom: 16px;
+    font-size: 13px; color: #4b5563; }
+</style>
+</head>
+<body>
+  <h1>PC Guardian · 白名单与灰名单</h1>
+  <p class="sub">每行一个 URL 或域名（域名会自动补 https://）。保存后同步到本地后台服务。</p>
+
+  <div class="stats" id="stats">加载中…</div>
+
+  <h3>白名单</h3>
+  <textarea id="whitelist" placeholder="https://www.example.com/"></textarea>
+
+  <h3>灰名单</h3>
+  <textarea id="grayscale" placeholder="*.tk"></textarea>
+
+  <div class="row">
+    <button id="save">保存并生效</button>
+    <button id="reload" class="secondary">从后台重新拉取</button>
+  </div>
+
+<script>
+  const BACKEND = 'http://127.0.0.1:7890';
+
+  async function load() {
+    try {
+      const r = await fetch(BACKEND + '/whitelist');
+      const data = await r.json();
+      const items = (data.items || []).map(i => i.pattern);
+      document.getElementById('whitelist').value = items.join('\n');
+    } catch (e) {
+      document.getElementById('whitelist').value = '// 后台未启动：' + e.message;
+    }
+    const stored = await chrome.storage.local.get(['grayscale']);
+    document.getElementById('grayscale').value = (stored.grayscale || []).join('\n');
+
+    chrome.runtime.sendMessage({ type: 'get_stats' }, (resp) => {
+      if (resp) {
+        document.getElementById('stats').textContent =
+          `恶意缓存: ${resp.mal_cache_size} / 白名单: ${resp.whitelist_size} / 灰名单: ${resp.grayscale_size}`;
+      }
+    });
+  }
+
+  document.getElementById('save').addEventListener('click', async () => {
+    const wl = document.getElementById('whitelist').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const gl = document.getElementById('grayscale').value.split('\n').map(s => s.trim()).filter(Boolean);
+
+    // 先清空旧白名单再逐条添加（POST 是 upsert）
+    try {
+      const cur = await (await fetch(BACKEND + '/whitelist')).json();
+      for (const it of (cur.items || [])) {
+        await fetch(BACKEND + '/whitelist/' + encodeURIComponent(it.pattern), { method: 'DELETE' });
+      }
+      for (const p of wl) {
+        await fetch(BACKEND + '/whitelist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pattern: p }),
+        });
+      }
+    } catch (e) {
+      alert('后台写入失败：' + e.message);
+      return;
+    }
+
+    await chrome.storage.local.set({ grayscale: gl });
+    chrome.runtime.sendMessage({ type: 'reload_config' });
+    alert('已保存，下次访问生效。');
+    load();
+  });
+
+  document.getElementById('reload').addEventListener('click', load);
+
+  load();
+</script>
+</body>
+</html>

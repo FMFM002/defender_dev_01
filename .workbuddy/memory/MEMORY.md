@@ -22,6 +22,7 @@
 - **日志**：全量进文件，拦截页只��示用户需要知道的；按天切、保留 30 天
 - **验收方式**：用户真机测试；本项目要带 DEBUG 级 logger
 - **开发节奏**：一气写完到 P1 才停下让用户验收
+- **资源占用指标（硬性）**：常驻 RSS ≤ 80 MB（空闲）/ ≤ 150 MB（高峰期）。每个模块启动时自报 RSS；超阈值主动降级（关闭非核心线程）。引入新依赖前要评估常驻内存成本
 
 ### 用户偏好
 - 用户非技术背景，表述可能不精确；要主动提问澄清
@@ -63,6 +64,7 @@
 - Defender：实时防护全开（写注册表策略可能被 Defender 触发告警，setup 时要加白名单说明）
 - 当前会话：**非管理员**（写 HKLM 需要 UAC 提权；开发期尽量不写 HKLM，运行 setup 时才提权）
 - Python 3.13.14（managed），Node 22.22.2（managed）
+- 本地 git 已连 GitHub：origin = `https://github.com/FMFM002/defender_dev_01.git`；凭证缓存到 `~/.git-credentials`
 
 ### 参考项目（GitHub 实测筛选）
 - **uBlock Origin**（gorhill/uBlock，68k）+ **uAssets**（6k）：declarativeNetRequest 规则语法标准答案

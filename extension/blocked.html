@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PC Guardian · 已拦截</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --danger: #dc2626;
+    --danger-bg: #fef2f2;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 14px; }
+  .wrap { max-width: 720px; margin: 60px auto; padding: 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 28px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  .badge { display: inline-block; background: var(--danger-bg); color: var(--danger);
+    padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.5px; margin-bottom: 12px; }
+  h1 { font-size: 22px; margin: 0 0 8px; color: var(--text); }
+  .url-box { background: #f3f4f6; border-radius: 4px; padding: 10px 12px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px;
+    color: var(--text); word-break: break-all; margin-bottom: 16px; }
+  .summary { color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--accent); font-weight: 500;
+    padding: 8px 0; user-select: none; }
+  summary::before { content: '▸ '; display: inline-block; transition: transform 0.2s; }
+  details[open] summary::before { content: '▾ '; }
+  .evidence-block { background: #f9fafb; border: 1px solid var(--border);
+    border-radius: 4px; padding: 12px 16px; margin-top: 8px; }
+  .evidence-item { margin-bottom: 8px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; color: var(--text); }
+  .evidence-item strong { color: var(--danger); }
+  .actions { display: flex; gap: 12px; margin-top: 24px; }
+  .btn { padding: 8px 16px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); cursor: pointer; font-size: 14px;
+    text-decoration: none; display: inline-block; }
+  .btn:hover { background: #f9fafb; }
+  .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-primary:hover { background: #1d4ed8; }
+  .footer-note { color: var(--muted); font-size: 12px; margin-top: 20px;
+    border-top: 1px solid var(--border); padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <span class="badge">已拦截</span>
+    <h1>可疑访问已被 PC Guardian 阻断</h1>
+    <div class="url-box" id="target-url">—</div>
+    <p class="summary">
+      云查 / 灰查 / 沙查 <strong>任一项</strong> 命中异常证据。为防止信息冒用、未连惯 / 病毒下发，未连惯访问。
+    </p>
+    <details>
+      <summary>查看异常证据</summary>
+      <div class="evidence-block" id="evidence-list">加载中…</div>
+    </details>
+    <div class="actions">
+      <a href="javascript:history.back()" class="btn">返回上一页</a>
+      <a href="javascript:window.close()" class="btn">关闭</a>
+      <a href="#" id="whitelist-btn" class="btn">加入白名单</a>
+    </div>
+    <div class="footer-note">
+      PC Guardian · 决策依据：云查（URLhaus）+ 灰查（灰名单 / 启发式）+ 沙查（行为）
+    </div>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const targetUrl = params.get('url') || '';
+  document.getElementById('target-url').textContent = targetUrl;
+
+  let evidence = [];
+  try {
+    evidence = JSON.parse(decodeURIComponent(params.get('ev') || '[]'));
+  } catch (_) {
+    evidence = [];
+  }
+
+  const layerName = {
+    cloud: '云查（URLhaus 等）',
+    grayscale: '灰查（已知可疑名单）',
+    heuristic: '启发式（URL 异常特征）',
+    sandbox: '沙查（行为监控）',
+  };
+
+  const el = document.getElementById('evidence-list');
+  if (!evidence.length) {
+    el.textContent = '无证据记录：';
+  } else {
+    el.innerHTML = evidence.map(e => {
+      const name = layerName[e.layer] || e.layer;
+      const detail = e.detail || '';
+      const sources = e.sources ? `（来源: ${e.sources.join(',')}）` : '';
+      const score = (e.score != null) ? `（评分: ${e.score}）` : '';
+      return `<div class="evidence-item"><strong>${name}</strong>: ${e.hit || ''} ${sources} ${score}<br>${detail}</div>`;
+    }).join('');
+  }
+
+  // 加入白名单
+  document.getElementById('whitelist-btn').addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    if (!targetUrl) return;
+    try {
+      await fetch('http://127.0.0.1:7890/whitelist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern: targetUrl }),
+      });
+      alert('已加入白名单，下次访问将放行：');
+      history.back();
+    } catch (e) {
+      alert('加入失败：本地后台服务未启动：' + e.message);
+    }
+  });
+</script>
+</body>
+</html>
