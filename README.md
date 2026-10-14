@@ -112,6 +112,10 @@
 
 > 端口冲突时：服务会提示占用进程的 PID，或双击 `scripts\stop.bat` 一键清理。
 
+> **双击 `.bat` 闪退、看不到报错？** 批处理脚本必须使用 Windows 原生格式（CRLF 换行 + ASCII 内容）。
+> 本仓库的 `start.bat` / `stop.bat` / `apply_asr.bat` 已统一为该格式，并在出错时自动 `pause` 停留以便查看原因。
+> 若自行改动，请保持 CRLF 换行、不要写入非 ASCII 字符（否则 cmd 会按 GBK 误解析导致乱码报错）。
+
 ### Edge 扩展
 1. 打开 `edge://extensions/`
 2. 打开"开发者模式"

@@ -1,26 +1,30 @@
 @echo off
-REM PC Guardian - 启动本地后台服务
-REM
-REM 用法：双击此文件，或在本目录打开终端执行 scripts\start.bat
-REM 停止服务：运行 scripts\stop.bat
-
-setlocal
-REM 切到项目根目录（%~dp0 = scripts\）
+title PC Guardian
+chcp 65001 >nul 2>&1
 cd /d "%~dp0.."
-
-REM 优先使用本项目 venv 的 Python（依赖齐全）
-set "VENV_PY=%USERPROFILE%\.workbuddy\binaries\python\envs\pc-guardian\Scripts\python.exe"
-if exist "%VENV_PY%" (
-    set "PY=%VENV_PY%"
-) else (
-    set "PY=py"
+if errorlevel 1 (
+    echo [ERROR] Cannot enter project directory: %~dp0..
+    echo Press any key to exit...
+    pause >nul
+    exit /b 1
 )
 
+set "VENV_PY=%USERPROFILE%\.workbuddy\binaries\python\envs\pc-guardian\Scripts\python.exe"
+set "PY=%VENV_PY%"
+if not exist "%VENV_PY%" set "PY=py"
+
 echo.
-echo =^> 启动 PC Guardian（端口 7890）...
-echo     使用解释器: %PY%
-echo     停止服务请运行 scripts\stop.bat
+echo   ============================================
+echo    PC Guardian  -  local backend
+echo    Address : http://127.0.0.1:7890
+echo    Python  : %PY%
+echo    Stop    : run scripts\stop.bat
+echo   ============================================
 echo.
 
 "%PY%" -m src.guardian.main
-endlocal
+set "RC=%errorlevel%"
+echo.
+echo   PC Guardian stopped ^(exit code = %RC%^)
+echo   Press any key to close this window...
+pause >nul

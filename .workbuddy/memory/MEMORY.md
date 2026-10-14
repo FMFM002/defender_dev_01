@@ -79,6 +79,16 @@
 - **进程监控选 WMI 而非 pyetwkit**：pyetwkit ��译复杂，pywin32 单 binary 依赖即可；WMI 延迟秒级对进程告警够用
 - **URLhaus 401 = 正常**：无害域名 URLhaus 拒查询（query_status=invalid），HTTP 401 在 result 内 status='error'、malicious=False → 不算云查异常
 - **内存优化**：`_LazyDB` 让 SQLite 初始化延迟到首次调用，import 时 RSS 从 79MB → 48MB
+- **WMI NextEvent 超时是正常控制流**：无事件时每秒抛超时异常（中文"已超时" / HRESULT -2147209215），必须静默 continue，否则日志被刷屏。识别函数：`etw_proc._is_wmi_timeout()`
+- **WMI 进程监控需管理员权限**：非管理员订阅 `Win32_ProcessStartTrace` 报"拒绝访问"，已降级为友好 WARNING（不影响 URL 拦截）
+- **单实例保护**：main.py 启动前检测 7890 端口，占用时打印占用 PID；`scripts/stop.bat` 一键释放
+
+### 环境操作经验（Windows + Git Bash 坑）
+- PowerShell 工具输出偶尔被吞 → 用 `Out-File` 写 C:\Temp\*.txt 再 Read
+- Bash 后台启服务 `cmd &` 后 `$!` 是 shell wrapper，杀不干净 Python 子进程 → 用无头测试脚本（Popen + terminate）或按 PID 精确杀
+- Git Bash 里 `taskkill //F //PID n` 报错 → 用 PowerShell `Stop-Process -Force`
+- 沙箱下 `.git/refs/remotes/` 写入不持久化 → `git status` 显示 `[gone]`，纯噪音；用 `git ls-remote origin` 验证远端
+- Git push：`git ls-remote`/`git fetch` 已可免密；push 若提示要密码，用 token 写 URL 推完立即 reset
 
 ### 已知环境现实（影响设计）
 - OS: Win11 家庭中文版 Build 26200
