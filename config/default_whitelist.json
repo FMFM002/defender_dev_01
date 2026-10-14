@@ -3,8 +3,7 @@
     "description": "PC Guardian 默认白名单。仅在本地首次启动时拉取到 chrome.storage；用户可在 Options 页面增删。",
     "updated": "2026-10-14",
     "version": 1
-}
-,
+  },
   "whitelist": [
     "https://www.baidu.com/",
     "https://baike.baidu.com/",
@@ -65,15 +64,12 @@
   ],
   "heuristics": {
     "block_ports": [22, 3389, 4444, 5900, 6667],
-    "suspicious_keywords_url": [
-      "login", "verify", "account", "update", "wallet", "crypto",
-      "free", "prize", "winner", "urgent", "bank", "secure-",
-      "unlock", "bonus", "gift"
-    ],
+    "_note_keywords": "suspicious_keywords_url 已停用：login/account/update 等词在正常网址的路径中极其常见，启用会误拦大量正常站点。如需启用，请只针对主机名且用更具体的钓鱼特征。",
+    "suspicious_keywords_url": [],
     "idn_homograph_keywords": ["paypal", "apple", "google", "microsoft", "amazon", "bank"],
     "suspicious_tlds": [".tk", ".top", ".xyz", ".click", ".ml", ".ga", ".cf", ".gq"],
     "max_url_length": 350,
     "max_subdomain_depth": 5,
     "punycode_threshold": "any"
-}
+  }
 }

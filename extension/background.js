@@ -24,10 +24,15 @@ const MAL_CACHE_MAX = 2000;
 const URL_MAX_LEN = 3500; // Edge URL 上限兼容
 
 // 内存中的 Set/Map（service worker 重启会丢失，需要持久化的走 chrome.storage）
-const defaultCfg = null; // 占位（实际通过 loadConfig 加载）
-let CONFIG = { whitelist: new Set(), grayscale: new Set(), heuristics: null };
+let CONFIG = {
+  whitelist: new Set(),
+  grayscale: new Set(),
+  heuristics: null,
+  defaultWhitelist: [],   // 内置默认白名单（始终生效，用户不可删）
+  defaultGrayscale: [],   // 内置默认灰名单
+};
 const MAL_CACHE = new Map(); // url -> {score, sources, ts}
-let REFRESH_TIMER = null;
+let SANDBOX_EVENTS = 0;      // 沙查层累计观测事件数（P1 仅观测，不拦截）
 
 // ============ 启动 ============
 
@@ -43,26 +48,33 @@ async function init() {
 
 async function setupAlarms() {
   chrome.alarms.create(ALARM_PERIOD, { periodInMinutes: 30 });
-  chrome.alarms.onAlarm.addListener(async (a) => {
-    if (a.name === ALARM_PERIOD) {
-      await refreshAllRules();
-    }
-  });
 }
+
+// 告警监听器只注册一次（放在顶层，避免每次 init 重复叠加）
+chrome.alarms.onAlarm.addListener(async (a) => {
+  if (a.name === ALARM_PERIOD) {
+    await refreshAllRules();
+  }
+});
 
 async function loadConfig() {
   // 默认白名单内嵌（首次安装直接可用），随后从本地后端拉取用户白名单合并。
   const defaults = await fetch(chrome.runtime.getURL('config/default_whitelist.json'))
     .then(r => r.json()).catch(() => null);
 
-  // 从 chrome.storage 加载（被 Options 页面或本地后端写入）
-  const stored = await chrome.storage.local.get(['whitelist', 'grayscale', 'heuristics']);
+  CONFIG.defaultWhitelist = (defaults && defaults.whitelist) || [];
+  CONFIG.defaultGrayscale = (defaults && defaults.grayscale) || [];
 
-  CONFIG.whitelist = new Set(stored.whitelist || (defaults?.whitelist || []));
-  CONFIG.grayscale = new Set(stored.grayscale || (defaults?.grayscale || []));
+  // 从 chrome.storage 加载用户自定义部分（被 Options 页面或本地后端写入）
+  const stored = await chrome.storage.local.get(['whitelist', 'grayscale', 'heuristics']);
+  const userWhite = stored.whitelist || [];
+  const userGray = stored.grayscale || [];
+
+  CONFIG.whitelist = new Set([...CONFIG.defaultWhitelist, ...userWhite]);
+  CONFIG.grayscale = new Set([...CONFIG.defaultGrayscale, ...userGray]);
   CONFIG.heuristics = stored.heuristics || defaults?.heuristics || {
     block_ports: [22, 3389, 4444, 5900, 6667],
-    suspicious_keywords_url: ['login','verify','account','update','wallet'],
+    suspicious_keywords_url: [],
     suspicious_tlds: ['.tk','.top','.xyz','.ml','.ga'],
     max_url_length: 350,
     max_subdomain_depth: 5,
@@ -76,8 +88,8 @@ async function refreshAllRules() {
     const r = await fetch(BACKEND + '/whitelist', { method: 'GET' });
     if (r.ok) {
       const data = await r.json();
-      const userList = (data.items || []).map(it => it.pattern);
-      CONFIG.whitelist = new Set(userList);
+      const userList = (data.items || []).map(it => it.pattern).filter(Boolean);
+      CONFIG.whitelist = new Set([...CONFIG.defaultWhitelist, ...userList]);
       await chrome.storage.local.set({ whitelist: userList });
     }
   } catch (e) {
@@ -358,11 +370,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     init().then(() => sendResponse({ ok: true }));
     return true;
   }
+  if (msg?.type === 'sandbox_events') {
+    // P1：沙查层仅"观测计数"，不参与拦截。
+    // 原因：正常页面也会大量注入外链脚本/iframe，若直接当异常会误拦几乎所有网站。
+    // 保留上报通道，待 P2 用更精确的行为规则后再纳入决策。
+    SANDBOX_EVENTS += (msg.items || []).length;
+    sendResponse({ ok: true, total: SANDBOX_EVENTS });
+    return false;
+  }
   if (msg?.type === 'get_stats') {
     sendResponse({
       mal_cache_size: MAL_CACHE.size,
       whitelist_size: CONFIG.whitelist.size,
       grayscale_size: CONFIG.grayscale.size,
+      sandbox_events: SANDBOX_EVENTS,
     });
     return false;
   }

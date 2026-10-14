@@ -82,6 +82,13 @@
 - **WMI NextEvent 超时是正常控制流**：无事件时每秒抛超时异常（中文"已超时" / HRESULT -2147209215），必须静默 continue，否则日志被刷屏。识别函数：`etw_proc._is_wmi_timeout()`
 - **WMI 进程监控需管理员权限**：非管理员订阅 `Win32_ProcessStartTrace` 报"拒绝访问"，已降级为友好 WARNING（不影响 URL 拦截）
 - **单实例保护**：main.py 启动前检测 7890 端口，占用时打印占用 PID；`scripts/stop.bat` 一键释放
+- **进程告警规则 v2（2026-10-14 收紧误报）**：v1 把 `cmd.exe`/`powershell.exe` 当高风险父进程 + 把 `%APPDATA%`/`%LOCALAPPDATA%` 当投放目录 → 误报刷屏（连本服务自己都报）。v2 改为语义化判断：
+  - `BENIGN_CHILDREN`（conhost/dllhost/…）命中直接放行
+  - `HIGH_RISK_PARENTS` = Office + 脚本宿主（**去掉 cmd/powershell**）
+  - 浏览器只在「派生非浏览器进程」时报（`browser_spawn_process`）
+  - 投放路径只留 `%TEMP%` + `\Downloads\`
+  - `_handle_event` 加 5 分钟去重（进程名+父名+规则）
+  - 单测脚本：`C:\Temp\test_eval.py`（11 用例，正反双向）
 
 ### 环境操作经验（Windows + Git Bash 坑）
 - PowerShell 工具输出偶尔被吞 → 用 `Out-File` 写 C:\Temp\*.txt 再 Read

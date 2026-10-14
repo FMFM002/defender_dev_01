@@ -39,6 +39,7 @@
   .evidence-item { margin-bottom: 8px; font-family: ui-monospace, Consolas, monospace;
     font-size: 12px; color: var(--text); }
   .evidence-item strong { color: var(--danger); }
+  .evidence-item .detail { color: var(--muted); }
   .actions { display: flex; gap: 12px; margin-top: 24px; }
   .btn { padding: 8px 16px; border-radius: 4px; border: 1px solid var(--border);
     background: var(--card); color: var(--text); cursor: pointer; font-size: 14px;
@@ -57,7 +58,7 @@
     <h1>可疑访问已被 PC Guardian 阻断</h1>
     <div class="url-box" id="target-url">—</div>
     <p class="summary">
-      云查 / 灰查 / 沙查 <strong>任一项</strong> 命中异常证据。为防止信息冒用、未连惯 / 病毒下发，未连惯访问。
+      云查 / 灰查 / 沙查 <strong>任一项</strong> 命中异常证据。为防止信息泄露、账号被盗或病毒下发，已阻止本次访问。
     </p>
     <details>
       <summary>查看异常证据</summary>
@@ -73,54 +74,6 @@
     </div>
   </div>
 </div>
-<script>
-  const params = new URLSearchParams(location.search);
-  const targetUrl = params.get('url') || '';
-  document.getElementById('target-url').textContent = targetUrl;
-
-  let evidence = [];
-  try {
-    evidence = JSON.parse(decodeURIComponent(params.get('ev') || '[]'));
-  } catch (_) {
-    evidence = [];
-  }
-
-  const layerName = {
-    cloud: '云查（URLhaus 等）',
-    grayscale: '灰查（已知可疑名单）',
-    heuristic: '启发式（URL 异常特征）',
-    sandbox: '沙查（行为监控）',
-  };
-
-  const el = document.getElementById('evidence-list');
-  if (!evidence.length) {
-    el.textContent = '无证据记录：';
-  } else {
-    el.innerHTML = evidence.map(e => {
-      const name = layerName[e.layer] || e.layer;
-      const detail = e.detail || '';
-      const sources = e.sources ? `（来源: ${e.sources.join(',')}）` : '';
-      const score = (e.score != null) ? `（评分: ${e.score}）` : '';
-      return `<div class="evidence-item"><strong>${name}</strong>: ${e.hit || ''} ${sources} ${score}<br>${detail}</div>`;
-    }).join('');
-  }
-
-  // 加入白名单
-  document.getElementById('whitelist-btn').addEventListener('click', async (ev) => {
-    ev.preventDefault();
-    if (!targetUrl) return;
-    try {
-      await fetch('http://127.0.0.1:7890/whitelist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pattern: targetUrl }),
-      });
-      alert('已加入白名单，下次访问将放行：');
-      history.back();
-    } catch (e) {
-      alert('加入失败：本地后台服务未启动：' + e.message);
-    }
-  });
-</script>
+<script src="blocked.js"></script>
 </body>
 </html>
