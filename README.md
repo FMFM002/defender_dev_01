@@ -81,7 +81,7 @@
 ## 关键决策（2026-10-14 与用户确认）
 
 - **浏览器覆盖**：仅 Edge（Manifest V3）
-- **威胁情报**：本地域名黑名单（Phishing Army，免 Key 免费）为主；URLhaus 因 abuse.ch 2025-06-30 起强制 Auth-Key，改为**可选**（配置环境变量 `URLHAUS_AUTH_KEY` 后启用，未配置则静默跳过）
+- **威胁情报**：本地域名黑名单（Phishing Army，免 Key 免费）为主；URLhaus 因 abuse.ch 2025-06-30 起强制 Auth-Key，改为**可选**（在项目根目录 `.env` 写 `URLHAUS_AUTH_KEY=...` 后启用，未配置则静默跳过）
 - **LLM 裁决**：可选项，默认不启用
 - **拦截深度**：ASR 注册表规则 + WMI/ETW 进程监控
 - **运行方式**：开发期直接跑 Python
@@ -125,6 +125,10 @@
 1. 打开 `edge://extensions/`
 2. 打开"开发者模式"
 3. 点"加载解压缩的扩展"→ 选择本项目 `extension/` 目录
+4. **改过扩展代码后**：回到 `edge://extensions/`，点扩展卡片上的**"重新加载"**（⟳）。
+   Edge 不会自动热更新，不点这一步跑的还是旧代码。
+5. **验证是否加载成功**：点扩展的"扩展选项"，页首"安装自检"会显示**构建号**和四条测试用例的实际判定。
+   若自检里出现 ✗，说明 ①构建号不是最新（没点重新加载），或 ②本地后端没启动（先双击 `scripts\start.bat`）。
 
 ### ASR 规则（需管理员）
 - 双击 `scripts\apply_asr.bat`（自动请求管理员权限）
@@ -164,16 +168,22 @@
 
 > ⚠️ `malware.wicar.org` 这类"恶意软件样本站"只有在**配置了 URLhaus Auth-Key**后才会命中云查。
 > 未配置时它既不在本地黑名单（该库聚焦钓鱼域名），也不在灰名单中，因此会放行。
-> 想启用：到 https://auth.abuse.ch/ 免费注册 → 创建 Auth-Key → 设环境变量 `URLHAUS_AUTH_KEY` 后重启服务。
+> 想启用：到 https://auth.abuse.ch/ 免费注册 → 创建 Auth-Key → 写入 `.env` 后重启服务（见下）。
+>
+> **常见坑**：abuse.ch 返回 `{"query_status":"unknown_auth_key"}`（HTTP 403）表示 Key 无效/写错/未激活。
+> 服务日志会给出明确提示，但**不影响**本地黑名单与启发式的拦截。
 
 ### 启用 URLhaus（可选）
 
-```powershell
-# 当前会话临时生效
-$env:URLHAUS_AUTH_KEY = "你的Auth-Key"
-# 或永久写入用户环境变量
-[Environment]::SetEnvironmentVariable("URLHAUS_AUTH_KEY", "你的Auth-Key", "User")
+在项目根目录新建 `.env`（可复制 `.env.example`），写入一行后**重启服务**：
+
 ```
+URLHAUS_AUTH_KEY=你的Auth-Key
+```
+
+- 申请：https://auth.abuse.ch/ 登录 → 个人资料(Profile) 的 **Optional** 区域点 **Generate Key** → 复制完整 Key。
+- `.env` 已在 `.gitignore` 中，不会被提交。
+- 也可用系统环境变量 `URLHAUS_AUTH_KEY`（优先级高于 `.env`）。
 
 ## 状态
 
@@ -197,6 +207,18 @@ $env:URLHAUS_AUTH_KEY = "你的Auth-Key"
 - **URLhaus 全部 401** → abuse.ch 2025-06-30 起强制 Auth-Key。已支持可选 Auth-Key，并新增免 Key 的
   本地域名黑名单源（Phishing Army）。
 - **拦截页按钮点不动** → MV3 CSP 禁止 `javascript:` 链接与内联脚本，已改为独立 `blocked.js` 事件绑定。
+
+**v0.2.0 更新（2026-10-14 下午）**：
+
+- **URLhaus Auth-Key 持久化** → 新增项目根目录 `.env` 加载（`config.py` 自动读取），
+  Key 不再依赖临时环境变量；`.env` 已加入 `.gitignore`。Key 被 abuse.ch 拒绝时（`unknown_auth_key`）
+  会给出明确的一次性警告日志。
+- **扩展"自检"** → 设置页页首新增安装自检：显示 Service Worker **构建号**、白/灰名单条数、
+  后端连通性，并对 4 条测试 URL 跑真实决策，逐条给出 ✓/✗。用于一眼判断"是否加载了新代码"。
+  （背景：多次出现"改了代码但 `edge://extensions` 没点重新加载 → 跑的还是旧 SW"。）
+- **名单覆盖防御** → `hydrate()` 合并后若结果为空则**保留内置默认值**，杜绝早期"名单被清空 → 完全不拦截"复现。
+- **进程误报修复** → Edge 正常派生的 `identity_helper.exe` 等官方 helper 不再告警；
+  新增"可执行文件是否位于浏览器官方安装目录"判定，比进程名白名单更稳。恶意程序从浏览器目录外落地仍然告警。
 
 **P2 计划**：
 

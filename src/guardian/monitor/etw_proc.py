@@ -68,11 +68,26 @@ HIGH_RISK_PARENTS = {
 
 # 浏览器：正常只派生「自己」（helper 进程）；派生「其它」进程才可疑
 BROWSER_PARENTS = {"chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe"}
+
+# 浏览器自带的辅助进程（子进程名白名单）。
+# 覆盖 Edge / Chrome 常见的官方 helper —— identity_helper.exe 曾造成误报。
 BROWSER_HELPERS = {
     "chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe",
-    "crashpad_handler.exe", "msedge_proxy.exe",
-    "microsoftedgeupdate.exe", "microsoftedgecp.exe",
+    "crashpad_handler.exe", "msedge_proxy.exe", "chrome_proxy.exe",
+    "microsoftedgeupdate.exe", "msedgeupdate.exe", "microsoftedgecp.exe",
+    "identity_helper.exe", "notification_helper.exe", "elevation_service.exe",
+    "msedgewebview2.exe", "pwahelper.exe", "widgets.exe", "widgetservice.exe",
+    "googleupdate.exe", "setup.exe",
 }
+
+# 浏览器官方安装目录：只要子进程的可执行文件落在这些目录里，就视为"浏览器自己人"。
+# 比单纯比对进程名更稳（Edge 版本目录里不断新增 helper）。
+BROWSER_INSTALL_DIRS = (
+    "\\microsoft\\edge\\application\\",
+    "\\google\\chrome\\application\\",
+    "\\mozilla firefox\\",
+    "\\microsoft\\edgewebview\\application\\",
+)
 
 # 高风险命令行模式（Suspicious）
 # 说明：这些是"落地执行型"特征，正规软件极少出现在命令行里。
@@ -296,7 +311,7 @@ def _evaluate(name: str, path: str, cmdline: str, parent_name: str) -> tuple[lis
         evidence.append(f"父进程 {parent_name} 属于 Office/脚本宿主")
 
     # 2) 浏览器派生了「非浏览器」进程
-    if p in BROWSER_PARENTS and n not in BROWSER_HELPERS:
+    if p in BROWSER_PARENTS and n not in BROWSER_HELPERS and not _in_browser_install_dir(path):
         rules.append("browser_spawn_process")
         evidence.append(f"浏览器 {parent_name} 派生了 {name}")
 
@@ -320,6 +335,14 @@ def _evaluate(name: str, path: str, cmdline: str, parent_name: str) -> tuple[lis
                 break
 
     return rules, evidence
+
+
+def _in_browser_install_dir(path: str) -> bool:
+    """判断可执行文件是否位于浏览器官方安装目录（视为浏览器自带组件）。"""
+    if not path:
+        return False
+    p = path.lower().replace("/", "\\")
+    return any(d in p for d in BROWSER_INSTALL_DIRS)
 
 
 def _resolve_path(pid: int) -> str:

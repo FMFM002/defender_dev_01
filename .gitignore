@@ -62,3 +62,8 @@ tmp/
 temp/
 *.tmp
 *.bak
+
+# 本地密钥（绝不入库；示例文件 .env.example 保留）
+.env
+.env.*
+!.env.example

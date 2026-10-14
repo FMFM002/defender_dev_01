@@ -15,14 +15,28 @@
     border-radius: 4px; cursor: pointer; font-size: 14px; }
   button.secondary { background: white; color: #2563eb; }
   .stats { background: #f3f4f6; padding: 12px; border-radius: 4px; margin-bottom: 16px;
-    font-size: 13px; color: #4b5563; }
+    font-size: 13px; color: #4b5563; line-height: 1.8; }
+  .diag { border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 24px; }
+  .diag h3 { margin: 0 0 6px; font-size: 15px; }
+  .diag .hint { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
+  .diag table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .diag td { padding: 5px 6px; border-bottom: 1px solid #f0f0f0; }
+  .ok { color: #15803d; font-weight: 600; }
+  .bad { color: #dc2626; font-weight: 600; }
+  code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 </style>
 </head>
 <body>
+  <div class="diag">
+    <h3>安装自检</h3>
+    <div class="hint">装完 / 改完后先点这个按钮。若结果里有 ✗，说明 Edge 里加载的还是旧代码，请到 <code>edge://extensions</code> 点"重新加载"。</div>
+    <div class="stats" id="stats">加载中…</div>
+    <button id="selftest" class="secondary" type="button">运行自检</button>
+    <div id="selftest-result"></div>
+  </div>
+
   <h1>PC Guardian · 白名单与灰名单</h1>
   <p class="sub">每行一个 URL 或域名（域名会自动补 https://）。保存后同步到本地后台服务。</p>
-
-  <div class="stats" id="stats">加载中…</div>
 
   <h3>白名单</h3>
   <textarea id="whitelist" placeholder="https://www.example.com/"></textarea>

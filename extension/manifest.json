@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PC Guardian",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "本地电脑防护系统 —— Edge 浏览器侧防线（URL/下载拦截，行为监控）。",
   "minimum_chrome_version": "108",
   "permissions": [

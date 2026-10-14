@@ -19,6 +19,31 @@ LOGS_DIR = DATA_DIR / "logs"
 QUARANTINE_DIR = DATA_DIR / "quarantine"
 DB_DIR = DATA_DIR / "db"
 
+
+def _load_dotenv(path: Path) -> None:
+    """加载项目根目录下的 .env（本地密钥，不入版本库）。
+
+    格式：每行 KEY=VALUE，# 开头为注释。已存在的系统环境变量优先（不被覆盖），
+    这样"临时 set 环境变量"仍然可以压过 .env。
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+# 在读取任何 os.environ 之前先加载 .env
+_load_dotenv(PROJECT_ROOT / ".env")
+
 # HTTP 服务
 HOST = "127.0.0.1"
 PORT = 7890  # 不与 SakuraCat-VPN 7897 冲突
@@ -30,6 +55,9 @@ INTEL_CACHE_TTL_HOURS = 24
 
 # URLhaus Auth-Key（abuse.ch 自 2025-06-30 起强制鉴权；留空则自动跳过 URLhaus）
 # 申请地址（免费）：https://auth.abuse.ch/  →  个人资料 → 创建 Auth-Key
+# 配置方式（任选其一，推荐 .env）：
+#   1) 项目根目录 .env 写入一行： URLHAUS_AUTH_KEY=你的Key
+#   2) 设置系统环境变量 URLHAUS_AUTH_KEY
 URLHAUS_AUTH_KEY = os.environ.get("URLHAUS_AUTH_KEY", "").strip()
 
 # 本地域名黑名单（Phishing Army，免 Key 免费，约 16 万条钓鱼域名）

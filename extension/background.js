@@ -23,6 +23,10 @@
 //   - 白名单/灰名单压缩为 Set（O(1) 查询）
 //   - 动态规则重建做 300ms 防抖，避免频繁写规则
 
+// 构建号：每次改动扩展后 +1，用于在设置页"自检"里确认 Edge 是否加载了新代码。
+// 如果自检显示的构建号 ≠ 本文件的 SW_BUILD，说明 edge://extensions 没有点"重新加载"。
+const SW_BUILD = '0.2.0';
+
 const BACKEND = 'http://127.0.0.1:7890';
 const INTEL_URL = BACKEND + '/intel/url';
 const ALARM_REFRESH = 'pc-guardian-refresh';
@@ -138,9 +142,14 @@ async function hydrate() {
     }
   } catch (_) { /* 后端没起就跳过 */ }
 
-  CONFIG.whitelist = new Set([...CONFIG.defaultWhitelist, ...userWhite]);
-  CONFIG.grayscale = new Set([...CONFIG.defaultGrayscale, ...userGray]);
-  console.log('[PC Guardian] hydrate done ',
+  // 防御：万一某一路来源异常导致集合为空，绝不能把内置默认值覆盖掉
+  // （早期版本曾因"后端白名单为空 → 整体覆盖 → 全部放行"而完全不拦截）
+  const wl = new Set([...CONFIG.defaultWhitelist, ...userWhite]);
+  if (wl.size) CONFIG.whitelist = wl;
+  const gl = new Set([...CONFIG.defaultGrayscale, ...userGray]);
+  if (gl.size) CONFIG.grayscale = gl;
+
+  console.log('[PC Guardian] hydrate done v' + SW_BUILD,
     'whitelist=' + CONFIG.whitelist.size, 'grayscale=' + CONFIG.grayscale.size);
 }
 
@@ -453,11 +462,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === 'get_stats') {
     sendResponse({
+      build: SW_BUILD,
       mal_cache_size: MAL_CACHE.size,
       whitelist_size: CONFIG.whitelist.size,
       grayscale_size: CONFIG.grayscale.size,
       sandbox_events: SANDBOX_EVENTS,
     });
+    return false;
+  }
+  if (msg?.type === 'ping') {
+    sendResponse({ ok: true, build: SW_BUILD });
     return false;
   }
 });
